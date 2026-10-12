@@ -12,9 +12,13 @@ cfg <- config::get(file = "config/config.yml")
 attributes(cfg) <- list(names = names(cfg))
 active <- unlist(cfg$active_datasets)
 ds_labels <- vapply(cfg$datasets[active], `[[`, character(1), "label")
+# Outputs of the default (paper) profile go to reports/; other profiles get their own folder so a
+# precision run cannot overwrite the paper figures
+profile <- Sys.getenv("R_CONFIG_ACTIVE", "default")
+out_dir <- if (profile == "default") "reports" else file.path("reports", profile)
 # Report on the Maringe case study: not in smoke runs, and only if Quarto is installed.
 # Kept out of cfg on purpose: every target depends on cfg, so a new key would rerun everything.
-render_report <- "maringe" %in% active && Sys.getenv("R_CONFIG_ACTIVE") != "smoke" &&
+render_report <- "maringe" %in% active && profile == "default" &&
   nzchar(Sys.which("quarto"))
 # Parallel workers need crew; without it the pipeline runs sequentially. QBA_WORKERS overrides
 # cfg$workers without editing the config (every target depends on cfg, so editing it reruns all).
@@ -71,16 +75,16 @@ per_dataset <- tar_map(
   )),
   tar_target(paper_figures, save_paper_figures(
     performance, perf_adjusted, sim_results, base_data, dgm, correction$z_crit_calibrated,
-    cfg$datasets[[ds]], file.path("reports", "paper", ds)
+    cfg$datasets[[ds]], file.path(out_dir, "paper", ds)
   ), format = "file"),
   tar_target(balance, ccw_balance(base_data, cfg$datasets[[ds]]$pipeline,
                                    cfg$datasets[[ds]][["dgm"]]$covariates)),
   tar_target(fig_balance, save_balance_figure(balance, cfg$datasets[[ds]],
-                                              file.path("reports", "paper", ds)), format = "file"),
+                                              file.path(out_dir, "paper", ds)), format = "file"),
   tar_target(fig_protocol, save_plot(
     plot_protocol(ds, cfg$datasets[[ds]]$pipeline,
                   if (ds == "maringe") 365.24 else cfg$datasets[[ds]]$horizon),
-    file.path("reports", paste0("fig_protocol_", ds, ".png")), width = 8.5,
+    file.path(out_dir, paste0("fig_protocol_", ds, ".png")), width = 8.5,
     height = if (ds == "maringe") 4.6 else 5
   ), format = "file")
 )
@@ -106,7 +110,8 @@ list(
 
   # Outputs
   tar_target(fig_estimates, save_plot(plot_estimates(sim_all, performance_all, ds_labels),
-                                      "reports/fig_estimates.png", height = 5.5), format = "file"),
+                                      file.path(out_dir, "fig_estimates.png"), height = 5.5),
+             format = "file"),
   tar_target(session, sessioninfo::session_info()),
   # How the run was parallelised (reported with the run time)
   tar_target(run_settings, list(
@@ -118,7 +123,7 @@ list(
   # Two-dataset comparison figure (two_datasets profile only)
   if (length(active) > 1) {
     tar_target(fig_comparison, save_plot(plot_comparison(performance_all, ds_labels),
-                                         "reports/fig_comparison.png", height = 5.5),
+                                         file.path(out_dir, "fig_comparison.png"), height = 5.5),
                format = "file")
   },
   # Colleague report on the Maringe case study (needs the Quarto CLI)

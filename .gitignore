@@ -6,3 +6,4 @@ renv/library/
 reports/qba_report_files/
 .DS_Store
 reports/paper/*_files/
+reports/smoke/

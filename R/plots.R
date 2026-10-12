@@ -76,6 +76,7 @@ plot_comparison <- function(perf_all, labels) {
 #' @param plot ggplot; @param file Output path; @param width,height Inches.
 #' @return File path.
 save_plot <- function(plot, file, width = 7, height = 4.2) {
+  dir.create(dirname(file), showWarnings = FALSE, recursive = TRUE)
   ggplot2::ggsave(file, plot, width = width, height = height, dpi = 150, bg = "white")
   file
 }

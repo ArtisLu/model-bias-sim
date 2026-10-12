@@ -43,6 +43,17 @@ set `Sys.setenv(QBA_WORKERS = parallel::detectCores() - 1)` before `tar_make()`.
 on the number of workers. The calibration search is sequential, so it takes about 7.5 minutes whatever
 the number of workers.
 
+**More replicates.** `B` (replicates per scenario) is in `config/config.yml`. For a precision check
+without touching the paper run, use the `b100k` profile (100,000 per scenario) with its own store;
+its figures go to `reports/b100k/` and the report is not re-rendered:
+
+```r
+Sys.setenv(R_CONFIG_ACTIVE = "b100k", QBA_WORKERS = parallel::detectCores() - 1)
+targets::tar_make(store = "_targets_b100k")
+targets::tar_read(performance_maringe, store = "_targets_b100k")
+Sys.unsetenv("R_CONFIG_ACTIVE")   # back to the paper run
+```
+
 Results of the 12 Oct 2026 run (Maringe, B = 10,000, R 4.3.3, 2 crew workers, UTF-8 locale): unzip
 `results/targets_store_2026-10-12_maringe.zip` here to get `_targets/`. `targets::tar_outdated()` is then
 empty and `targets::tar_read()` works without rerunning (a full run takes about 21 minutes with 2 workers,
