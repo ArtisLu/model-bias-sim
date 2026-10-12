@@ -1,13 +1,13 @@
 # ADEMP protocol — modelling-bias QBA, CCW case study (v0.3)
 
-**Owner:** Artis Luguzis · **Date:** 12 Oct 2026 · **Status:** paper run (SynPUF only). v0.2 (Maringe + SynPUF) is frozen on branch `archive/two-datasets`; the Maringe columns below are kept for reference.
+**Owner:** Artis Luguzis · **Date:** 12 Oct 2026 · **Status:** paper run (Maringe only). v0.2 (Maringe + SynPUF) is frozen on branch `archive/two-datasets`; SynPUF stays in the code and can be rerun with the `two_datasets` profile.
 
 ## A — Aims
 
-1. Apply the draft paper's modelling-bias QBA to the published CCW analysis of the SynPUF MI cohort (Webster-Clark et al. 2025).
+1. Apply the draft paper's modelling-bias QBA to the published CCW analysis of the Maringe et al. (2020) lung cancer example.
 2. Does the CCW analysis show bias in the log-HR, under-coverage of its 95% CI, or inflated type I error, when the true effect equals the observed estimate?
 3. Show the adjustment step (paper Section 2.7) and check that the adjusted analysis restores nominal performance.
-4. (v0.2 only) Compare with the Maringe lung cancer example.
+4. (v0.2, `two_datasets` profile) Compare with the SynPUF MI cohort.
 
 ## Base data
 
@@ -25,7 +25,7 @@ Maringe: classic CCW teaching example, already cited in the draft; small sample.
 
 - **Kept fixed (paper Step 2):** all covariates and each patient's observed treatment date `s` (treatment plan; `s = ∞` if none).
 - **Simulated (Step 3):** event time from a Weibull proportional-hazards model fitted to the original data, with treatment as a **time-varying** exposure: h(t) = λρt^(ρ−1) exp(γ'X + θ·1{t ≥ s}). Treatment is observed only if `s` ≤ event/censoring time.
-- **Censoring (paper Section 2.3; v0.3):** loss to follow-up is simulated from a second Weibull PH model fitted with the event/censoring indicator switched (loss to follow-up = event; outcome events and the 180-day horizon = censored), with the same covariates and treatment as a time-varying term, so censoring after treatment start has its own hazard. Censoring time = min(simulated loss time, 180 days). Maringe has administrative censoring only (`censoring: none`). `censoring: fixed` reproduces v0.2 (observed censoring times kept).
+- **Censoring (paper Section 2.3; v0.3):** a censoring model is fitted only where there is censoring to model. In Maringe every survivor is followed to 365.24 days (152 of 152), so censoring is administrative only and identical in every replicate (`censoring: none`); a Weibull model with the switched indicator would have no events. For SynPUF (30 losses before day 180) loss to follow-up is simulated from a second Weibull PH model fitted with the event/censoring indicator switched (loss = event; outcome events and day 180 = censored), same covariates, treatment as a time-varying term, so censoring after treatment start has its own hazard. `censoring: fixed` reproduces v0.2 (observed censoring times kept).
 - Event and censoring times by inversion of the cumulative hazards; common random numbers (replicate *b* uses the same uniforms in both scenarios; censoring uniforms are drawn after the event uniforms, so event draws are unchanged from v0.2).
 - **Scenarios:** θ\* (calibrated so the true CCW effect equals the observed estimate) and θ = 0 (no effect, type I error).
 
@@ -67,4 +67,4 @@ Per scenario: bias ± MCSE (including the truth's MC error), empirical SE, model
 | 2026-10-02 | Control-arm censoring model: weekly pooled logistic → Cox (Maringe) | Weekly discretisation left within-week informative censoring uncorrected |
 | 2026-10-02 | Added null-specific measures (coverage of 0, direction of rejections) | Clarify type I error definition |
 | 2026-10-05 | v0.2: added SynPUF dataset; θ grid replaced by observed-effect + null scenarios; secant calibration; truth with 24 large datasets; correction = observed − bias | Focus on the observed effect; compare datasets |
-| 2026-10-12 | v0.3: SynPUF only (Maringe kept in code, `two_datasets` profile); loss to follow-up simulated from a Weibull censoring model (switched indicator, time-varying treatment); B = 10,000; cross-fitted performance of the adjusted analysis; paper tables/figures | Paper uses one dataset (agreed with Gerd); paper Section 2.3 and Gerd's request to model censoring after treatment start |
+| 2026-10-12 | v0.3: Maringe only for the paper (SynPUF kept in code, `two_datasets` profile); Weibull censoring model with switched indicator and time-varying treatment where loss to follow-up exists (SynPUF; Maringe has administrative censoring only); B = 10,000; cross-fitted performance of the adjusted analysis; paper tables/figures | Paper uses one dataset; paper Section 2.3 and Gerd's request to model censoring after treatment start |

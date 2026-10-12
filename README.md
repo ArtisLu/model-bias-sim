@@ -1,8 +1,8 @@
 # model-bias-sim — modelling-bias QBA simulation (CCW case study)
 
 Simulation for Rippin, Luguzis, Antunes, Ralphs: *Quantifying modelling bias in pharmacoepidemiology*
-(paper Section 4). Case study: the clone-censor-weighting (CCW) analysis of the SynPUF myocardial
-infarction cohort from the Webster-Clark et al. (2025) tutorial.
+(paper Section 4). Case study: the clone-censor-weighting (CCW) analysis of the Maringe et al. (2020)
+lung cancer example (surgery within 6 months vs no surgery).
 Design: `protocol/ADEMP.md`. Coding standards: `docs/simulation_setup.md`.
 How the pipeline fits together (folders, scripts, dependencies): `docs/technical_setup.html`.
 
@@ -10,11 +10,12 @@ How the pipeline fits together (folders, scripts, dependencies): `docs/technical
 
 | What | Where | Datasets run |
 |---|---|---|
-| Current analysis for the paper | `main` | SynPUF only (`active_datasets` in `config/config.yml`) |
+| Current analysis for the paper | `main` | Maringe only (`active_datasets` in `config/config.yml`) |
 | Two-dataset comparison of 5 Oct 2026 (frozen) | branch `archive/two-datasets` | Maringe + SynPUF |
 | Results of that run | `archive/2026-10-05_two_datasets/` | report, figures, targets store |
 
-The Maringe code is still on `main` and covered by the unit tests; it is just not run by default.
+The SynPUF code is still on `main` and covered by the unit tests and the smoke run; it is just not run
+by default.
 To rerun the two-dataset comparison with the current code:
 `Sys.setenv(R_CONFIG_ACTIVE = "two_datasets"); targets::tar_make()`.
 
@@ -36,8 +37,8 @@ Sys.unsetenv("R_CONFIG_ACTIVE"); targets::tar_make()         # full run (B = 10,
 source("reports/paper/build_section4.R")                     # Word draft of paper Section 4
 ```
 
-Outputs: `reports/paper/` (paper figures as PNG and EPS, `section4_draft.docx`) and
-`reports/fig_protocol_synpuf.png`. The Quarto colleague report (`reports/qba_report.qmd`) is
+Outputs: `reports/paper/<dataset>/` (paper figures as PNG and EPS), `reports/paper/section4_draft.docx`
+and `reports/fig_protocol_<dataset>.png`. The Quarto colleague report (`reports/qba_report.qmd`) is
 written for two datasets and runs only in the `two_datasets` profile.
 
 ## Layout

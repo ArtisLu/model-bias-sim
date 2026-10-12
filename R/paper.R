@@ -7,89 +7,133 @@
 #' @return Scalar SMD in percent.
 smd_pct <- function(x, g) {
   m1 <- mean(x[g]); m0 <- mean(x[!g])
-  v <- if (all(x %in% 0:1)) (m1 * (1 - m1) + m0 * (1 - m0)) / 2 else (stats::var(x[g]) + stats::var(x[!g])) / 2
+  v <- if (all(x %in% 0:1)) {
+    (m1 * (1 - m1) + m0 * (1 - m0)) / 2
+  } else {
+    (stats::var(x[g]) + stats::var(x[!g])) / 2
+  }
   100 * (m1 - m0) / sqrt(v)
 }
 
-#' Baseline characteristics by observed treatment initiation (Table S2 layout)
-#' @param raw Raw SynPUF cohort (`baseccwcohort.sas7bdat`).
-#' @param spec `cfg$datasets$synpuf` (uses `horizon`).
-#' @return data.table: label, indent, n1, p1, n0, p0, smd (text columns, ready to print).
-make_baseline_table <- function(raw, spec) {
-  d <- data.table::as.data.table(raw)
-  h <- spec$horizon
-  # Initiation counts only within the 180-day follow-up and before the outcome or loss
-  fu <- pmin(d$followup, h)
-  g <- !is.na(d$RX_start) & d$RX_start <= fu
-  n1 <- sum(g); n0 <- sum(!g)
-  f1 <- function(x) formatC(x, format = "f", digits = 1)
-  cat_row <- function(label, x) {
-    data.table::data.table(
-      label = label, indent = 1L,
-      n1 = format(sum(x[g])), p1 = f1(100 * mean(x[g])),
-      n0 = format(sum(x[!g])), p0 = f1(100 * mean(x[!g])),
-      smd = f1(smd_pct(as.numeric(x), g))
-    )
-  }
-  # Binary variables get one SMD (on the first level), as in Table S2
-  bin_rows <- function(label_a, label_b, x) {
-    r <- rbind(cat_row(label_a, x), cat_row(label_b, !x))
-    r[2, smd := ""]
-    r
-  }
-  head_row <- function(label) {
-    data.table::data.table(label = label, indent = 0L, n1 = "", p1 = "", n0 = "", p0 = "", smd = "")
-  }
-  q_row <- function(label, x, smd = TRUE) {
-    q <- function(v) formatC(stats::quantile(v, c(0.5, 0.25, 0.75), names = FALSE), format = "f", digits = 0)
-    a <- q(x[g]); b <- if (any(!g & !is.na(x))) q(x[!g]) else c("", "", "")
-    data.table::data.table(
-      label = label, indent = 0L, n1 = a[1], p1 = paste(a[2], a[3]),
-      n0 = b[1], p0 = paste(b[2], b[3]),
-      smd = if (smd) f1(smd_pct(x, g)) else ""
-    )
-  }
-  race <- d$race
-  rbind(
-    data.table::data.table(label = "Total", indent = 0L, n1 = format(n1), p1 = "100.0",
-                           n0 = format(n0), p0 = "100.0", smd = ""),
-    head_row("Sex"),
-    bin_rows("Men", "Women", d$sex == "1"),
-    head_row("Race"),
-    cat_row("White", race == "1"), cat_row("Black", race == "2"),
-    cat_row("Other", race == "3"), cat_row("Hispanic", race == "5"),
-    head_row("End-stage renal disease"),
-    bin_rows("Yes", "No", d$renal == "Y"),
-    head_row("Outcome within 180 days"),
-    cat_row("Readmission or death", d$outcome == 1 & d$followup <= h)[, smd := ""],
-    cat_row("Lost to follow-up", d$outcome == 0 & d$followup < h)[, smd := ""],
-    data.table::data.table(label = "", indent = 0L, n1 = "Median", p1 = "Q1 Q3",
-                           n0 = "Median", p0 = "Q1 Q3", smd = ""),
-    q_row("Age at MI (years)", d$baseline_age),
-    q_row("Time to treatment start (days)", data.table::fifelse(g, d$RX_start, NA_real_), smd = FALSE)
+#' Read the raw base data file (read-only source)
+#' @param file Path; @param ds Dataset key.
+#' @return data.table as stored in the file.
+read_raw_data <- function(file, ds) {
+  switch(ds,
+    maringe = data.table::fread(file),
+    synpuf = data.table::as.data.table(haven::read_sas(file))
   )
 }
 
+#' Table rows in the Table S2 layout (helpers shared by both datasets)
+#' @param g Logical group indicator (TRUE = first column).
+#' @return List of row-building functions.
+s2_rows <- function(g) {
+  f1 <- function(x) formatC(x, format = "f", digits = 1)
+  row <- function(label, indent, n1, p1, n0, p0, smd) {
+    data.table::data.table(label = label, indent = indent, n1 = n1, p1 = p1, n0 = n0, p0 = p0, smd = smd)
+  }
+  cat_row <- function(label, x, smd = TRUE) {
+    row(label, 1L, format(sum(x[g])), f1(100 * mean(x[g])), format(sum(x[!g])), f1(100 * mean(x[!g])),
+        if (smd) f1(smd_pct(as.numeric(x), g)) else "")
+  }
+  list(
+    total = function() row("Total", 0L, format(sum(g)), "100.0", format(sum(!g)), "100.0", ""),
+    head = function(label) row(label, 0L, "", "", "", "", ""),
+    cat = cat_row,
+    # Binary characteristics get one SMD, on the first level (as in Table S2)
+    bin = function(label_a, label_b, x) rbind(cat_row(label_a, x), cat_row(label_b, !x, smd = FALSE)),
+    qhead = function() row("", 0L, "Median", "Q1 Q3", "Median", "Q1 Q3", ""),
+    q = function(label, x, digits = 1, smd = TRUE) {
+      q <- function(v) formatC(stats::quantile(v, c(0.5, 0.25, 0.75), names = FALSE, na.rm = TRUE),
+                               format = "f", digits = digits)
+      a <- q(x[g])
+      b <- if (any(!g & !is.na(x))) q(x[!g]) else c("", "", "")
+      row(label, 0L, a[1], paste(a[2], a[3]), b[1], paste(b[2], b[3]),
+          if (smd) f1(smd_pct(x, g)) else "")
+    }
+  )
+}
+
+#' Baseline characteristics by observed treatment (Table S2 layout)
+#' @param raw Raw data from `read_raw_data()`; @param ds Dataset key; @param spec Dataset config.
+#' @return data.table: label, indent, n1, p1, n0, p0, smd (text), attribute `groups`.
+make_baseline_table <- function(raw, ds, spec) {
+  d <- data.table::copy(raw)
+  if (ds == "maringe") {
+    g <- !is.na(d$timetosurgery)
+    r <- s2_rows(g)
+    tb <- rbind(
+      r$total(),
+      r$head("Sex"), r$bin("Men", "Women", d$sex == 1),
+      r$head("Performance status"),
+      r$cat("0", d$perf == 0), r$cat("1", d$perf == 1), r$cat("2", d$perf == 2),
+      r$head("Charlson's comorbidity index"),
+      r$cat("0", d$charlson == 0), r$cat("1", d$charlson == 1), r$cat("2", d$charlson == 2),
+      r$head("TNM stage"), r$bin("I", "II", d$stage == 1),
+      r$head("Route to diagnosis"), r$bin("Emergency", "Non-emergency", d$emergency == 1),
+      r$qhead(),
+      r$q("Age at diagnosis (years)", d$age),
+      r$q("Deprivation score", d$deprivation, digits = 2),
+      r$q("Time to surgery (days)", data.table::fifelse(g, d$timetosurgery, NA_real_), 0, FALSE)
+    )
+    attr(tb, "groups") <- c("Received surgery", "Did not receive surgery")
+  } else {
+    h <- spec$horizon
+    # Initiation counts only within the follow-up and before the outcome or loss
+    g <- !is.na(d$RX_start) & d$RX_start <= pmin(d$followup, h)
+    r <- s2_rows(g)
+    tb <- rbind(
+      r$total(),
+      r$head("Sex"), r$bin("Men", "Women", d$sex == "1"),
+      r$head("Race"),
+      r$cat("White", d$race == "1"), r$cat("Black", d$race == "2"),
+      r$cat("Other", d$race == "3"), r$cat("Hispanic", d$race == "5"),
+      r$head("End-stage renal disease"), r$bin("Yes", "No", d$renal == "Y"),
+      r$head("Outcome within 180 days"),
+      r$cat("Readmission or death", d$outcome == 1 & d$followup <= h, smd = FALSE),
+      r$cat("Lost to follow-up", d$outcome == 0 & d$followup < h, smd = FALSE),
+      r$qhead(),
+      r$q("Age at MI (years)", d$baseline_age, 0),
+      r$q("Time to treatment start (days)", data.table::fifelse(g, d$RX_start, NA_real_), 0, FALSE)
+    )
+    attr(tb, "groups") <- c("Started treatment", "Did not start treatment")
+  }
+  tb
+}
+
 #' Weibull outcome and censoring model parameters (supplementary table)
-#' @param dgm Fitted DGM with `cens` element.
+#' @param dgm Fitted DGM with `cens` element; @param spec Dataset config (outcome label).
 #' @return data.table: model, term, hr, ci (text), n_events.
-make_dgm_table <- function(dgm) {
-  lab <- c(age_c = "Age (per 10 years)", sex = "Female", renal = "End-stage renal disease",
-           nonwhite = "Non-white race", theta = "On treatment (time-varying)")
+make_dgm_table <- function(dgm, spec) {
+  # Display labels and the unit each HR refers to (coefficients are per unit of the model term)
+  lab <- c(
+    age_c = "Age (per 5 years)", sex = "Female", perf1 = "Performance status 1 vs 0",
+    perf2 = "Performance status 2 vs 0", stage = "TNM stage II vs I",
+    deprivation = "Deprivation score (per 0.1)", charlson1 = "Charlson index 1 vs 0",
+    charlson2 = "Charlson index 2 vs 0", emergency = "Emergency presentation",
+    renal = "End-stage renal disease", nonwhite = "Non-white race",
+    theta = "On treatment (time-varying)"
+  )
+  # Age is centred and scaled in data.R; the unit is recorded in the config
+  lab["age_c"] <- paste0("Age (per ", spec$dgm$age_unit, " years)")
+  scale <- c(deprivation = 0.1)
   one <- function(m, model) {
     terms <- c(names(m$gamma), "theta")
-    b <- c(m$gamma, theta = m$theta_hat)
-    se <- m$se[terms]
+    k <- ifelse(terms %in% names(scale), scale[terms], 1)
+    b <- k * c(m$gamma, theta = m$theta_hat)
+    se <- k * m$se[terms]
+    lb <- ifelse(terms %in% names(lab), lab[terms], terms)
     f2 <- function(x) formatC(x, format = "f", digits = 2)
     rbind(
       data.table::data.table(model = model, term = "Weibull shape (rho)", hr = f2(m$rho), ci = ""),
       data.table::data.table(
-        model = model, term = unname(lab[terms]), hr = f2(exp(b)),
+        model = model, term = unname(lb), hr = f2(exp(b)),
         ci = paste0(f2(exp(b - 1.96 * se)), " to ", f2(exp(b + 1.96 * se)))
       )
     )[, n_events := m$n_events]
   }
-  out <- one(dgm, "Outcome: readmission or death")
+  out <- one(dgm, paste0("Outcome: ", tolower(spec$outcome_label)))
   if (identical(dgm$cens$model, "weibull")) out <- rbind(out, one(dgm$cens, "Censoring: loss to follow-up"))
   out
 }
@@ -144,8 +188,9 @@ evaluate_adjustment <- function(sim_results, truth_table, level = 0.95) {
 #' Observed analysis, reference model, calibration and performance in one list of tables
 #' @param obs Observed pipeline result; @param dgm Fitted DGM; @param cal Calibration.
 #' @param truth_table,performance,correction,perf_adj Pipeline targets for one dataset.
+#' @param spec Dataset config (`arm1` names the strategy coded 1).
 #' @return list(analysis = data.table, performance = data.table, dgm = data.table).
-make_results_table <- function(obs, dgm, cal, truth_table, performance, correction, perf_adj) {
+make_results_table <- function(obs, dgm, cal, truth_table, performance, correction, perf_adj, spec) {
   f2 <- function(x) formatC(x, format = "f", digits = 2)
   f3 <- function(x) formatC(x, format = "f", digits = 3)
   pc <- function(x) formatC(100 * x, format = "f", digits = 1)
@@ -184,7 +229,7 @@ make_results_table <- function(obs, dgm, cal, truth_table, performance, correcti
       "Mean estimate, log HR (true value)", "Bias, log HR", "Relative bias, % of empirical SE",
       "Empirical SE", "Model-based (robust) SE", "Relative error in model SE, %", "RMSE",
       "95% CI coverage, %", "Power, % (true HR = observed)", "Type I error, % (no effect)",
-      "Rejections favouring the longer window, % (no effect)", "Failed replicates, n"
+      paste0("Rejections favouring ", spec$arm1, ", % (no effect)"), "Failed replicates, n"
     ),
     ccw = c(
       paste0(f3(po$mean_est), " (", f3(po$truth), ")"),
@@ -204,7 +249,7 @@ make_results_table <- function(obs, dgm, cal, truth_table, performance, correcti
       fmt(getp("Type I error")$value, getp("Type I error")$mcse, TRUE), "", ""
     )
   )
-  list(analysis = analysis, performance = performance_tab, dgm = make_dgm_table(dgm))
+  list(analysis = analysis, performance = performance_tab, dgm = make_dgm_table(dgm, spec))
 }
 
 #' Theme of the earlier simulation papers: framed panels, grey strips, legend on the right
@@ -295,9 +340,9 @@ weibull_marginal_surv <- function(m, data, times) {
 }
 
 #' Figure: fit of the Weibull outcome and censoring models (Kaplan-Meier vs model)
-#' @param data Base data; @param dgm Fitted DGM.
+#' @param data Base data; @param dgm Fitted DGM; @param spec Dataset config (outcome label).
 #' @return ggplot.
-plot_paper_fit <- function(data, dgm) {
+plot_paper_fit <- function(data, dgm, spec) {
   times <- seq(0, max(data$time), length.out = 200)
   km <- function(status, panel) {
     f <- survival::survfit(survival::Surv(data$time, status) ~ 1)
@@ -307,7 +352,7 @@ plot_paper_fit <- function(data, dgm) {
     data.table::data.table(time = times, surv = weibull_marginal_surv(m, data, times),
                            what = "Weibull model", panel = panel)
   }
-  p1 <- "Readmission or death"
+  p1 <- spec$outcome_label
   p2 <- "Loss to follow-up"
   d <- rbind(km(data$status, p1), wb(dgm, p1))
   if (identical(dgm$cens$model, "weibull")) d <- rbind(d, km(data$cens_event, p2), wb(dgm$cens, p2))
@@ -318,21 +363,23 @@ plot_paper_fit <- function(data, dgm) {
     ggplot2::facet_wrap(~panel, scales = "free_y") +
     ggplot2::scale_colour_manual(values = c("Kaplan-Meier" = "black", "Weibull model" = "red"), name = NULL) +
     ggplot2::scale_linetype_manual(values = c("Kaplan-Meier" = "solid", "Weibull model" = "dashed"), name = NULL) +
-    ggplot2::labs(x = "Days since MI discharge", y = "Proportion free of the event") +
+    ggplot2::labs(x = "Days since time zero", y = "Proportion free of the event") +
     theme_paper() +
     ggplot2::theme(legend.position = "bottom")
 }
 
 #' Save all paper figures as PNG (600 dpi) and EPS
 #' @param performance,perf_adj,sim_results,data,dgm Pipeline targets (one dataset).
-#' @param dir Output folder; @param z_crit Calibrated critical value.
+#' @param z_crit Calibrated critical value; @param spec Dataset config; @param dir Output folder.
 #' @return Character vector of file paths.
-save_paper_figures <- function(performance, perf_adj, sim_results, data, dgm, dir, z_crit) {
+save_paper_figures <- function(performance, perf_adj, sim_results, data, dgm, z_crit, spec, dir) {
   dir.create(dir, showWarnings = FALSE, recursive = TRUE)
   figs <- list(
     fig_performance = list(plot_paper_performance(perf_adj), 13, 4.2),
     fig_distribution = list(plot_paper_distribution(sim_results, performance, z_crit), 12, 4.6),
-    fig_model_fit = list(plot_paper_fit(data, dgm), 10, 4.6)
+    fig_model_fit = list(
+      plot_paper_fit(data, dgm, spec), if (identical(dgm$cens$model, "weibull")) 10 else 6, 4.6
+    )
   )
   unlist(lapply(names(figs), function(nm) {
     f <- figs[[nm]]

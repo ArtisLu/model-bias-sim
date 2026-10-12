@@ -1,0 +1,347 @@
+<title>model-bias-sim pipeline map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: single reading column (~68ch) with full-width figures; stage colours encode pipeline stage everywhere */
+:root {
+  --bg: #f6f7f5; --surface: #ffffff; --fg: #1d2421; --muted: #5d6762; --line: #d9ddd9; --code-bg: #eef1ee;
+  --accent: #1f6f5c;
+  --st-input: #7a7f7c; --st-data: #a9741b; --st-dgm: #1f7a8c; --st-truth: #7552a3;
+  --st-sim: #2f5fb3; --st-pipe: #b44a2c; --st-perf: #3d8a3d; --st-out: #59605c;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #141917; --surface: #1c2220; --fg: #e3e8e5; --muted: #9aa49f; --line: #333b38; --code-bg: #232b28;
+  --accent: #5cc0a4;
+  --st-input: #9aa09d; --st-data: #e0a548; --st-dgm: #4fb3c7; --st-truth: #a98bd6;
+  --st-sim: #6f9be6; --st-pipe: #e47b5a; --st-perf: #74c174; --st-out: #a3aaa6; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #141917; --surface: #1c2220; --fg: #e3e8e5; --muted: #9aa49f; --line: #333b38; --code-bg: #232b28;
+  --accent: #5cc0a4;
+  --st-input: #9aa09d; --st-data: #e0a548; --st-dgm: #4fb3c7; --st-truth: #a98bd6;
+  --st-sim: #6f9be6; --st-pipe: #e47b5a; --st-perf: #74c174; --st-out: #a3aaa6; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 15.5px/1.6 var(--f-body); }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 20px; padding-block: 36px 72px; }
+.col { max-width: 72ch; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: 2.1rem; font-weight: 600; letter-spacing: -0.01em; }
+h2 { font-size: 1.45rem; font-weight: 600; margin-top: 3rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+h3 { font-size: 1.1rem; font-weight: 600; margin-top: 1.6rem; }
+p { margin: 0.7rem 0; }
+a { color: var(--accent); }
+code, .mono { font-family: var(--f-mono); font-size: 0.88em; }
+code { background: var(--code-bg); padding: 0.08em 0.35em; border-radius: 3px; }
+pre { background: var(--code-bg); padding: 14px 16px; border-radius: 6px; overflow-x: auto; font: 13px/1.55 var(--f-mono); margin: 0.8rem 0; }
+pre code { background: none; padding: 0; font-size: inherit; }
+.eyebrow { font: 500 0.78rem/1 var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 0.92rem; margin-top: 0.6rem; }
+.lede { font-size: 1.08rem; margin-top: 1.2rem; }
+.draft { display: inline-block; font: 500 0.75rem/1 var(--f-mono); padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); }
+nav.toc { margin-top: 1.6rem; display: flex; flex-wrap: wrap; gap: 8px; }
+nav.toc a { font-size: 0.88rem; text-decoration: none; color: var(--fg); border: 1px solid var(--line); background: var(--surface); padding: 5px 10px; border-radius: 4px; }
+nav.toc a:hover, nav.toc a:focus-visible { border-color: var(--accent); outline: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0.8rem 0 0.4rem; font-size: 0.86rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+.chip { display: inline-block; font: 500 0.72rem/1 var(--f-mono); padding: 4px 6px; border-radius: 3px; border: 1px solid currentColor; white-space: nowrap; }
+.s-input { color: var(--st-input); } .s-data { color: var(--st-data); } .s-dgm { color: var(--st-dgm); }
+.s-truth { color: var(--st-truth); } .s-sim { color: var(--st-sim); } .s-pipe { color: var(--st-pipe); }
+.s-perf { color: var(--st-perf); } .s-out { color: var(--st-out); }
+.bg-input { background: var(--st-input); } .bg-data { background: var(--st-data); } .bg-dgm { background: var(--st-dgm); }
+.bg-truth { background: var(--st-truth); } .bg-sim { background: var(--st-sim); } .bg-pipe { background: var(--st-pipe); }
+.bg-perf { background: var(--st-perf); } .bg-out { background: var(--st-out); }
+/* folder tree */
+.tree { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; margin-top: 1rem; }
+.tree table { border-collapse: collapse; width: 100%; min-width: 640px; }
+.tree td { padding: 6px 14px; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 0.9rem; }
+.tree tr:last-child td { border-bottom: 0; }
+.tree td.p { font-family: var(--f-mono); font-size: 0.84rem; white-space: pre; color: var(--fg); }
+.tree td.p .dir { font-weight: 500; }
+.tree td.p .g { color: var(--muted); }
+.tree td.c { width: 1%; white-space: nowrap; }
+.tree tr.sec td { background: var(--code-bg); }
+/* diagram */
+.fig { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow-x: auto; margin-top: 1rem; }
+.fig svg { display: block; min-width: 1040px; width: 100%; height: auto; }
+.lane { fill: var(--bg); stroke: none; }
+.lane-t { font: 600 13px var(--f-display); fill: var(--muted); }
+.edge { fill: none; stroke: var(--muted); stroke-width: 1.2; opacity: 0.55; }
+.arrowhead { fill: var(--muted); opacity: 0.8; }
+.nb { fill: var(--surface); stroke-width: 1.3; }
+.nn { font: 500 12.5px var(--f-mono); fill: var(--fg); }
+.nsub { font: 10.5px var(--f-body); fill: var(--muted); }
+.st-input .nb { stroke: var(--st-input); } .st-input .ns { fill: var(--st-input); }
+.st-data .nb { stroke: var(--st-data); } .st-data .ns { fill: var(--st-data); }
+.st-dgm .nb { stroke: var(--st-dgm); } .st-dgm .ns { fill: var(--st-dgm); }
+.st-truth .nb { stroke: var(--st-truth); } .st-truth .ns { fill: var(--st-truth); }
+.st-sim .nb { stroke: var(--st-sim); } .st-sim .ns { fill: var(--st-sim); }
+.st-pipe .nb { stroke: var(--st-pipe); } .st-pipe .ns { fill: var(--st-pipe); }
+.st-perf .nb { stroke: var(--st-perf); } .st-perf .ns { fill: var(--st-perf); }
+.st-out .nb { stroke: var(--st-out); } .st-out .ns { fill: var(--st-out); }
+.note { font-size: 0.88rem; color: var(--muted); }
+/* tables */
+.tbl { overflow-x: auto; margin-top: 1rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.tbl table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 0.9rem; }
+.tbl th { text-align: left; font: 600 0.8rem/1.3 var(--f-display); letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.tbl td { padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.tbl tr:last-child td { border-bottom: 0; }
+.tbl td:first-child { white-space: nowrap; }
+/* call chain */
+.chains { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 1rem; }
+.chain { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+.chain h3 { margin: 0 0 0.6rem; font-size: 1rem; }
+.chain ol, .chain ul { margin: 0; padding-left: 1.1rem; }
+.chain li { margin: 4px 0; font-size: 0.9rem; }
+.chain li ul { margin-top: 2px; }
+.chain .fn { font-family: var(--f-mono); font-size: 0.85rem; font-weight: 500; }
+.chain .f { color: var(--muted); font-size: 0.8rem; }
+ul.points li, ol.points li { margin: 6px 0; }
+.kbd { font-family: var(--f-mono); font-size: 0.85em; }
+@media (max-width: 560px) { h1 { font-size: 1.7rem; } .wrap { padding-inline: 16px; } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<div class="wrap">
+<header class="col">
+  <div class="eyebrow">Technical setup · first draft for review</div>
+  <h1>model-bias-sim pipeline map</h1>
+  <div class="meta"><span>Repository <span class="mono">ArtisLu/model-bias-sim</span></span><span>Branch <span class="mono">main</span> · protocol v0.3 · Maringe</span><span>12 Oct 2026</span></div>
+  <p class="lede">What each folder and script does, how the targets depend on each other, and what happens inside one simulated study. The simulation reproduces the seven QBA steps of the paper for the CCW analysis of the Maringe lung cancer example (surgery within 6 months vs no surgery).</p>
+  <nav class="toc" aria-label="Sections">
+    <a href="#overview">How it fits together</a><a href="#folders">Folders and scripts</a><a href="#dag">Target dependencies</a><a href="#chains">Inside one replicate</a><a href="#scripts">Script reference</a><a href="#config">Configuration</a><a href="#rng">Random numbers</a><a href="#run">Running and reading results</a><a href="#versions">Versions</a><a href="#open">Open points</a>
+  </nav>
+</header>
+
+<section class="col" id="overview">
+  <h2>How it fits together</h2>
+  <p>There is one entry point, <code>_targets.R</code>. It reads <code>config/config.yml</code>, loads every function in <code>R/</code>, and declares the targets (the cached steps). <code>targets::tar_make()</code> runs whatever is out of date and stores each result in <code>_targets/</code>. Nothing in <code>R/</code> runs on its own: each file only defines functions, and each function takes data in and returns a result, without reading files or global settings.</p>
+  <p>The scripts follow the paper's steps. The colour of a stage is the same in every diagram and table on this page.</p>
+  <div class="legend">
+    <span><i class="sw bg-input"></i>Inputs and seeds</span>
+    <span><i class="sw bg-data"></i>Data (Step 1)</span>
+    <span><i class="sw bg-pipe"></i>CCW analysis under test (Steps 1, 5)</span>
+    <span><i class="sw bg-dgm"></i>Reference DGM (Steps 2–3)</span>
+    <span><i class="sw bg-truth"></i>Truth and calibration (Step 3)</span>
+    <span><i class="sw bg-sim"></i>Replicates (Steps 3–5)</span>
+    <span><i class="sw bg-perf"></i>Performance and adjustment (Steps 6–7)</span>
+    <span><i class="sw bg-out"></i>Outputs</span>
+  </div>
+</section>
+
+<section id="folders">
+  <div class="col"><h2>Folders and scripts</h2>
+  <p>Files you edit are in <code>R/</code>, <code>config/</code> and <code>tests/</code>. Files the pipeline writes are in <code>_targets/</code> and <code>reports/</code>. Raw data are never modified.</p></div>
+  <div class="tree"><table>
+    <tr class="sec"><td class="p"><span class="dir">model-bias-sim/</span></td><td></td><td>Project root (RStudio project, renv)</td></tr>
+    <tr><td class="p"><span class="g">├─ </span>_targets.R</td><td class="c"><span class="chip s-input">entry point</span></td><td>Declares all targets and their order. The only file you run (through <code>tar_make()</code>).</td></tr>
+    <tr><td class="p"><span class="g">├─ </span><span class="dir">config/</span>config.yml</td><td class="c"><span class="chip s-input">settings</span></td><td>Seeds, number of replicates B, truth size, calibration, datasets, CCW and censoring settings. Profiles <code>default</code>, <code>smoke</code>, <code>two_datasets</code>.</td></tr>
+    <tr><td class="p"><span class="g">├─ </span><span class="dir">data/raw/</span></td><td class="c"><span class="chip s-data">read-only</span></td><td>Maringe example data (<code>lungcancer.csv</code>, used for the paper), SynPUF tutorial cohort (kept for the two-dataset profile), and a README with sources and MD5 checksums.</td></tr>
+    <tr class="sec"><td class="p"><span class="g">├─ </span><span class="dir">R/</span></td><td></td><td>Functions only, one file per stage</td></tr>
+    <tr><td class="p"><span class="g">│  ├─ </span>data.R</td><td class="c"><span class="chip s-data">Step 1</span></td><td>Reads the raw file and converts it to the common patient format (covariates, treatment date, follow-up, censoring).</td></tr>
+    <tr><td class="p"><span class="g">│  ├─ </span>pipeline.R</td><td class="c"><span class="chip s-pipe">Steps 1, 5</span></td><td>The CCW analysis under test: cloning, artificial censoring, censoring weights, weighted Cox model. The same function runs on real and simulated data.</td></tr>
+    <tr><td class="p"><span class="g">│  ├─ </span>dgm.R</td><td class="c"><span class="chip s-dgm">Steps 2–3</span></td><td>Fits the Weibull outcome model and, where there is loss to follow-up, the Weibull censoring model (switched indicator); simulates event and censoring times.</td></tr>
+    <tr><td class="p"><span class="g">│  ├─ </span>truth.R</td><td class="c"><span class="chip s-truth">Step 3</span></td><td>True CCW effect ψ(θ) from very large simulated datasets; search for θ* such that ψ(θ*) equals the observed estimate.</td></tr>
+    <tr><td class="p"><span class="g">│  ├─ </span>simulate.R</td><td class="c"><span class="chip s-sim">Steps 3–5</span></td><td>Runs one batch of replicates: draw random numbers, simulate outcomes, rerun the CCW analysis, record failures.</td></tr>
+    <tr><td class="p"><span class="g">│  ├─ </span>performance.R</td><td class="c"><span class="chip s-perf">Step 6</span></td><td>Bias, empirical and model SE, coverage, power, type I error, all with Monte Carlo SE; rsimsum cross-check.</td></tr>
+    <tr><td class="p"><span class="g">│  ├─ </span>correction.R</td><td class="c"><span class="chip s-perf">Step 7</span></td><td>Adjusted estimate, widened CI, calibrated critical value and p-value for the observed analysis.</td></tr>
+    <tr><td class="p"><span class="g">│  ├─ </span>paper.R</td><td class="c"><span class="chip s-out">outputs</span></td><td>Reads the raw file for the baseline table; paper tables and figures; performance of the adjusted analysis (cross-fitted).</td></tr>
+    <tr><td class="p"><span class="g">│  ├─ </span>plots.R</td><td class="c"><span class="chip s-out">outputs</span></td><td>Histogram of estimates, protocol diagram, two-dataset comparison figure.</td></tr>
+    <tr><td class="p"><span class="g">│  └─ </span>utils.R</td><td class="c"><span class="chip s-input">seeds</span></td><td>Replicate seeds, random draws per replicate, error-catching wrapper.</td></tr>
+    <tr><td class="p"><span class="g">├─ </span><span class="dir">tests/testthat/</span></td><td class="c"><span class="chip s-input">checks</span></td><td>Unit tests: DGM recovers its parameters, CRN monotonicity, censoring model, cloning rules, batch-size invariance, paper tables.</td></tr>
+    <tr class="sec"><td class="p"><span class="g">├─ </span><span class="dir">reports/</span></td><td></td><td>Written by the pipeline</td></tr>
+    <tr><td class="p"><span class="g">│  ├─ </span><span class="dir">paper/</span></td><td class="c"><span class="chip s-out">outputs</span></td><td><code>maringe/</code>: paper figures (PNG 600 dpi and EPS); <code>build_section4.R</code> and the Word draft <code>section4_draft.docx</code>.</td></tr>
+    <tr><td class="p"><span class="g">│  ├─ </span>fig_estimates.png, fig_protocol_maringe.png</td><td class="c"><span class="chip s-out">outputs</span></td><td>Distribution of estimates; CCW protocol diagram.</td></tr>
+    <tr><td class="p"><span class="g">│  └─ </span>qba_report.qmd</td><td class="c"><span class="chip s-out">two_datasets</span></td><td>Colleague report comparing Maringe and SynPUF. Rendered only in the <code>two_datasets</code> profile.</td></tr>
+    <tr><td class="p"><span class="g">├─ </span><span class="dir">protocol/</span>ADEMP.md</td><td class="c"><span class="chip s-input">design</span></td><td>Simulation protocol (aims, DGM, estimand, methods, performance) and change log.</td></tr>
+    <tr><td class="p"><span class="g">├─ </span><span class="dir">docs/</span></td><td class="c"><span class="chip s-input">design</span></td><td>Coding standards (<code>simulation_setup.md</code>) and this page.</td></tr>
+    <tr><td class="p"><span class="g">├─ </span><span class="dir">archive/</span>2026-10-05_two_datasets/</td><td class="c"><span class="chip s-out">frozen</span></td><td>Report, figures and targets store of the two-dataset run.</td></tr>
+    <tr><td class="p"><span class="g">└─ </span><span class="dir">_targets/</span></td><td class="c"><span class="chip s-out">not in git</span></td><td>Cache of every target result and its metadata (timings, warnings). Rebuilt by <code>tar_make()</code>.</td></tr>
+  </table></div>
+</section>
+
+<section id="dag">
+  <div class="col"><h2>Target dependencies</h2>
+  <p>Each box is a target; its second line names the script whose function computes it. An arrow means the target on the right uses the result on the left, so changing a box reruns everything downstream of it and nothing upstream. Every box in the four middle columns and the outputs column (except <code>fig_estimates</code> and the Word draft) exists once per active dataset, with the suffix <code>_maringe</code> in the store; the suffix is left out here.</p></div>
+  <div class="fig"><svg viewBox="0 0 1246 730" role="img" aria-labelledby="dag-t" class="dag">
+<title id="dag-t">Dependencies between pipeline targets, from raw data to paper outputs</title>
+<defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" class="arrowhead"/></marker></defs>
+<rect x="10" y="8" width="176" height="714" rx="8" class="lane"/>
+<text x="98.0" y="32" class="lane-t" text-anchor="middle">Inputs</text>
+<rect x="220" y="8" width="176" height="714" rx="8" class="lane"/>
+<text x="308.0" y="32" class="lane-t" text-anchor="middle">Step 1 · Observed data</text>
+<rect x="430" y="8" width="176" height="714" rx="8" class="lane"/>
+<text x="518.0" y="32" class="lane-t" text-anchor="middle">Steps 2–3 · Simulated world</text>
+<rect x="640" y="8" width="176" height="714" rx="8" class="lane"/>
+<text x="728.0" y="32" class="lane-t" text-anchor="middle">Steps 3–5 · Replicates</text>
+<rect x="850" y="8" width="176" height="714" rx="8" class="lane"/>
+<text x="938.0" y="32" class="lane-t" text-anchor="middle">Steps 6–7 · Summaries</text>
+<rect x="1060" y="8" width="176" height="714" rx="8" class="lane"/>
+<text x="1148.0" y="32" class="lane-t" text-anchor="middle">Outputs</text>
+<path d="M180,181.0 C202.0,181.0 202.0,111.0 224,111.0" class="edge" marker-end="url(#arr)"/>
+<path d="M180,181.0 C202.0,181.0 202.0,181.0 224,181.0" class="edge" marker-end="url(#arr)"/>
+<path d="M390,111.0 C414,111.0 1040,111.0 1064,111.0" class="edge" marker-end="url(#arr)"/>
+<path d="M308.0,200 L308.0,250" class="edge" marker-end="url(#arr)"/>
+<path d="M390,181.0 C412.0,181.0 412.0,181.0 434,181.0" class="edge" marker-end="url(#arr)"/>
+<path d="M390,271.0 C412.0,271.0 412.0,271.0 434,271.0" class="edge" marker-end="url(#arr)"/>
+<path d="M518.0,200 L518.0,250" class="edge" marker-end="url(#arr)"/>
+<path d="M518.0,290 L518.0,340" class="edge" marker-end="url(#arr)"/>
+<path d="M518.0,380 L518.0,430" class="edge" marker-end="url(#arr)"/>
+<path d="M518.0,470 L518.0,500" class="edge" marker-end="url(#arr)"/>
+<path d="M600,181.0 C622.0,181.0 622.0,631.0 644,631.0" class="edge" marker-end="url(#arr)"/>
+<path d="M600,361.0 C622.0,361.0 622.0,631.0 644,631.0" class="edge" marker-end="url(#arr)"/>
+<path d="M180,631.0 C204,631.0 620,631.0 644,631.0" class="edge" marker-end="url(#arr)"/>
+<path d="M180,691.0 C204,691.0 620,631.0 644,631.0" class="edge" marker-end="url(#arr)"/>
+<path d="M810,631.0 C832.0,631.0 832.0,371.0 854,371.0" class="edge" marker-end="url(#arr)"/>
+<path d="M600,521.0 C624,521.0 830,371.0 854,371.0" class="edge" marker-end="url(#arr)"/>
+<path d="M810,631.0 C832.0,631.0 832.0,451.0 854,451.0" class="edge" marker-end="url(#arr)"/>
+<path d="M810,631.0 C832.0,631.0 832.0,541.0 854,541.0" class="edge" marker-end="url(#arr)"/>
+<path d="M600,521.0 C624,521.0 830,541.0 854,541.0" class="edge" marker-end="url(#arr)"/>
+<path d="M938.0,352 L938.0,292" class="edge" marker-end="url(#arr)"/>
+<path d="M1020,271.0 C1042.0,271.0 1042.0,271.0 1064,271.0" class="edge" marker-end="url(#arr)"/>
+<path d="M1020,371.0 C1042.0,371.0 1042.0,271.0 1064,271.0" class="edge" marker-end="url(#arr)"/>
+<path d="M1020,541.0 C1042.0,541.0 1042.0,271.0 1064,271.0" class="edge" marker-end="url(#arr)"/>
+<path d="M1020,371.0 C1042.0,371.0 1042.0,371.0 1064,371.0" class="edge" marker-end="url(#arr)"/>
+<path d="M1020,541.0 C1042.0,541.0 1042.0,371.0 1064,371.0" class="edge" marker-end="url(#arr)"/>
+<path d="M810,631.0 C834,631.0 1040,451.0 1064,451.0" class="edge" marker-end="url(#arr)"/>
+<g class="node st-input"><rect x="16" y="162" width="164" height="38" rx="5" class="nb"/><rect x="16" y="162" width="5" height="38" rx="2" class="ns"/><text x="28" y="178" class="nn">base_file</text><text x="28" y="192" class="nsub">data/raw/lungcancer.csv</text></g>
+<g class="node st-input"><rect x="16" y="612" width="164" height="38" rx="5" class="nb"/><rect x="16" y="612" width="5" height="38" rx="2" class="ns"/><text x="28" y="628" class="nn">crn_seeds</text><text x="28" y="642" class="nsub">utils.R · B seeds</text></g>
+<g class="node st-input"><rect x="16" y="672" width="164" height="38" rx="5" class="nb"/><rect x="16" y="672" width="5" height="38" rx="2" class="ns"/><text x="28" y="688" class="nn">batch_id</text><text x="28" y="702" class="nsub">B / batch_size</text></g>
+<g class="node st-data"><rect x="226" y="92" width="164" height="38" rx="5" class="nb"/><rect x="226" y="92" width="5" height="38" rx="2" class="ns"/><text x="238" y="108" class="nn">raw_data</text><text x="238" y="122" class="nsub">paper.R · read_raw_data</text></g>
+<g class="node st-data"><rect x="226" y="162" width="164" height="38" rx="5" class="nb"/><rect x="226" y="162" width="5" height="38" rx="2" class="ns"/><text x="238" y="178" class="nn">base_data</text><text x="238" y="192" class="nsub">data.R</text></g>
+<g class="node st-pipe"><rect x="226" y="252" width="164" height="38" rx="5" class="nb"/><rect x="226" y="252" width="5" height="38" rx="2" class="ns"/><text x="238" y="268" class="nn">obs_result</text><text x="238" y="282" class="nsub">pipeline.R</text></g>
+<g class="node st-dgm"><rect x="436" y="162" width="164" height="38" rx="5" class="nb"/><rect x="436" y="162" width="5" height="38" rx="2" class="ns"/><text x="448" y="178" class="nn">dgm</text><text x="448" y="192" class="nsub">dgm.R · Weibull model(s)</text></g>
+<g class="node st-truth"><rect x="436" y="252" width="164" height="38" rx="5" class="nb"/><rect x="436" y="252" width="5" height="38" rx="2" class="ns"/><text x="448" y="268" class="nn">calibration</text><text x="448" y="282" class="nsub">truth.R · find θ*</text></g>
+<g class="node st-truth"><rect x="436" y="342" width="164" height="38" rx="5" class="nb"/><rect x="436" y="342" width="5" height="38" rx="2" class="ns"/><text x="448" y="358" class="nn">theta_sim</text><text x="448" y="372" class="nsub">c(θ*, 0)</text></g>
+<g class="node st-truth"><rect x="436" y="432" width="164" height="38" rx="5" class="nb"/><rect x="436" y="432" width="5" height="38" rx="2" class="ns"/><text x="448" y="448" class="nn">truth</text><text x="448" y="462" class="nsub">truth.R · ψ(θ*), ψ(0)</text></g>
+<g class="node st-truth"><rect x="436" y="502" width="164" height="38" rx="5" class="nb"/><rect x="436" y="502" width="5" height="38" rx="2" class="ns"/><text x="448" y="518" class="nn">truth_table</text><text x="448" y="532" class="nsub">performance.R</text></g>
+<g class="node st-sim"><rect x="646" y="612" width="164" height="38" rx="5" class="nb"/><rect x="646" y="612" width="5" height="38" rx="2" class="ns"/><text x="658" y="628" class="nn">sim_results</text><text x="658" y="642" class="nsub">simulate.R · 2 × 40 batches</text></g>
+<g class="node st-perf"><rect x="856" y="252" width="164" height="38" rx="5" class="nb"/><rect x="856" y="252" width="5" height="38" rx="2" class="ns"/><text x="868" y="268" class="nn">correction</text><text x="868" y="282" class="nsub">correction.R</text></g>
+<g class="node st-perf"><rect x="856" y="352" width="164" height="38" rx="5" class="nb"/><rect x="856" y="352" width="5" height="38" rx="2" class="ns"/><text x="868" y="368" class="nn">performance</text><text x="868" y="382" class="nsub">performance.R</text></g>
+<g class="node st-perf"><rect x="856" y="432" width="164" height="38" rx="5" class="nb"/><rect x="856" y="432" width="5" height="38" rx="2" class="ns"/><text x="868" y="448" class="nn">perf_rsimsum</text><text x="868" y="462" class="nsub">performance.R · cross-check</text></g>
+<g class="node st-perf"><rect x="856" y="522" width="164" height="38" rx="5" class="nb"/><rect x="856" y="522" width="5" height="38" rx="2" class="ns"/><text x="868" y="538" class="nn">perf_adjusted</text><text x="868" y="552" class="nsub">paper.R · cross-fitted</text></g>
+<g class="node st-out"><rect x="1066" y="92" width="164" height="38" rx="5" class="nb"/><rect x="1066" y="92" width="5" height="38" rx="2" class="ns"/><text x="1078" y="108" class="nn">table_baseline</text><text x="1078" y="122" class="nsub">paper.R · Table 1</text></g>
+<g class="node st-out"><rect x="1066" y="252" width="164" height="38" rx="5" class="nb"/><rect x="1066" y="252" width="5" height="38" rx="2" class="ns"/><text x="1078" y="268" class="nn">table_results</text><text x="1078" y="282" class="nsub">paper.R · Tables 2–3, S1</text></g>
+<g class="node st-out"><rect x="1066" y="352" width="164" height="38" rx="5" class="nb"/><rect x="1066" y="352" width="5" height="38" rx="2" class="ns"/><text x="1078" y="368" class="nn">paper_figures</text><text x="1078" y="382" class="nsub">paper.R · Figs (PNG, EPS)</text></g>
+<g class="node st-out"><rect x="1066" y="432" width="164" height="38" rx="5" class="nb"/><rect x="1066" y="432" width="5" height="38" rx="2" class="ns"/><text x="1078" y="448" class="nn">fig_estimates</text><text x="1078" y="462" class="nsub">plots.R</text></g>
+<g class="node st-out"><rect x="1066" y="512" width="164" height="38" rx="5" class="nb"/><rect x="1066" y="512" width="5" height="38" rx="2" class="ns"/><text x="1078" y="528" class="nn">fig_protocol</text><text x="1078" y="542" class="nsub">plots.R · from config</text></g>
+<g class="node st-out"><rect x="1066" y="672" width="164" height="38" rx="5" class="nb" stroke-dasharray="5 4"/><rect x="1066" y="672" width="5" height="38" rx="2" class="ns"/><text x="1078" y="688" class="nn">section4.docx</text><text x="1078" y="702" class="nsub">build_section4.R · reads store</text></g>
+</svg></div>
+  <p class="note col">Left out to keep the picture readable: every simulated-world target also reads <code>base_data</code>, and <code>truth</code> also reads <code>dgm</code>; <code>correction</code> also reads <code>obs_result</code> and the null-scenario replicates; the <code>*_all</code> targets only stack the per-dataset results. For the live, complete graph run <code>targets::tar_visnetwork()</code>.</p>
+</section>
+
+<section id="chains">
+  <div class="col"><h2>Inside one replicate</h2>
+  <p>The two heaviest targets, as chains of function calls. Both reuse the same simulation and analysis functions, so the truth and the replicates cannot drift apart.</p></div>
+  <div class="chains">
+    <div class="chain"><h3 class="s-sim">sim_results: one replicate b</h3>
+      <ol>
+        <li><span class="fn">run_batch()</span> <span class="f">simulate.R</span> picks replicates of this batch</li>
+        <li><span class="fn">draw_replicate_rng(seed_b)</span> <span class="f">utils.R</span>: <code>u_event</code>, <code>seed_aux</code>, <code>u_cens</code></li>
+        <li><span class="fn">simulate_outcomes()</span> <span class="f">dgm.R</span>
+          <ul><li><span class="fn">invert_weibull_tv()</span> event time, θ switches on at the treatment date</li>
+          <li>censoring: administrative at day 365.24 for Maringe; where a censoring model is fitted (SynPUF), a second <span class="fn">invert_weibull_tv()</span> draws the loss-to-follow-up time</li></ul></li>
+        <li><span class="fn">safely_run(run_pipeline)</span> <span class="f">utils.R, pipeline.R</span>
+          <ul><li><span class="fn">ccw_grace_vs_none()</span> → <span class="fn">build_clones()</span>, <span class="fn">weight_control()</span> (Cox model for time to surgery), <span class="fn">weight_surgery()</span> (logistic model at 6 months) → <span class="fn">split_clones()</span></li>
+          <li><span class="fn">fit_outcome()</span> weighted Cox, robust SE</li></ul></li>
+        <li>One row: estimate, SE, CI, p, status, message, θ, rep, seed, counts</li>
+      </ol></div>
+    <div class="chain"><h3 class="s-truth">truth and calibration</h3>
+      <ol>
+        <li><span class="fn">calibrate_theta()</span> <span class="f">truth.R</span> secant search, starts at θ̂</li>
+        <li><span class="fn">compute_truth(θ)</span> <span class="f">truth.R</span>
+          <ul><li><span class="fn">stack_copies()</span> 250 copies of the 200 patients (50,000)</li>
+          <li>for each of 24 truth seeds: <span class="fn">draw_replicate_rng()</span> → <span class="fn">simulate_outcomes()</span> → <span class="fn">run_pipeline(robust = FALSE)</span></li>
+          <li>mean of the 24 estimates and its MCSE</li></ul></li>
+        <li>Same truth seeds at every θ, so ψ(θ) is smooth and the search converges in a few steps</li>
+        <li><span class="fn">make_truth_table()</span> <span class="f">performance.R</span> sets the null truth to exactly 0 and keeps ψ(0) as a diagnostic</li>
+      </ol></div>
+  </div>
+</section>
+
+<section id="scripts">
+  <div class="col"><h2>Script reference</h2>
+  <p>Exported functions per script and the targets that call them. Helper functions used only inside the same file are listed after the semicolon.</p></div>
+  <div class="tbl"><table>
+    <thead><tr><th>Script</th><th>Functions</th><th>Called by</th></tr></thead>
+    <tbody>
+      <tr><td><span class="chip s-data">data.R</span></td><td><code>prepare_base_data</code>; <code>prepare_maringe</code>, <code>prepare_synpuf</code></td><td><code>base_data</code></td></tr>
+      <tr><td><span class="chip s-pipe">pipeline.R</span></td><td><code>run_pipeline</code>; Maringe: <code>ccw_grace_vs_none</code>, <code>build_clones</code>, <code>weight_control</code>, <code>weight_surgery</code>; SynPUF: <code>ccw_window_vs_window</code>, <code>ccw_window_arm</code>; both: <code>split_clones</code>, <code>fit_outcome</code></td><td><code>obs_result</code>; inside <code>compute_truth</code> and <code>run_batch</code></td></tr>
+      <tr><td><span class="chip s-dgm">dgm.R</span></td><td><code>fit_dgm</code>, <code>simulate_outcomes</code>; <code>fit_weibull_tv</code>, <code>dgm_negloglik</code>, <code>dgm_design</code>, <code>invert_weibull_tv</code></td><td><code>dgm</code>; inside <code>compute_truth</code>, <code>run_batch</code>, <code>plot_paper_fit</code></td></tr>
+      <tr><td><span class="chip s-truth">truth.R</span></td><td><code>calibrate_theta</code>, <code>compute_truth</code>; <code>stack_copies</code></td><td><code>calibration</code>, <code>truth</code></td></tr>
+      <tr><td><span class="chip s-sim">simulate.R</span></td><td><code>run_batch</code></td><td><code>sim_results</code> (one branch per scenario × batch)</td></tr>
+      <tr><td><span class="chip s-perf">performance.R</span></td><td><code>make_truth_table</code>, <code>summarise_performance</code>, <code>rsimsum_check</code></td><td><code>truth_table</code>, <code>performance</code>, <code>performance_rsimsum</code></td></tr>
+      <tr><td><span class="chip s-perf">correction.R</span></td><td><code>correct_estimate</code></td><td><code>correction</code></td></tr>
+      <tr><td><span class="chip s-out">paper.R</span></td><td><code>read_raw_data</code>, <code>make_baseline_table</code>, <code>evaluate_adjustment</code>, <code>make_results_table</code>, <code>save_paper_figures</code>; <code>s2_rows</code>, <code>make_dgm_table</code>, <code>plot_paper_*</code>, <code>theme_paper</code>, <code>smd_pct</code>, <code>weibull_marginal_surv</code></td><td><code>raw_data</code>, <code>table_baseline</code>, <code>perf_adjusted</code>, <code>table_results</code>, <code>paper_figures</code></td></tr>
+      <tr><td><span class="chip s-out">plots.R</span></td><td><code>plot_estimates</code>, <code>plot_protocol</code>, <code>plot_comparison</code>, <code>save_plot</code>; <code>protocol_examples</code>, <code>protocol_segments</code>, <code>theme_qba</code></td><td><code>fig_estimates</code>, <code>fig_protocol</code>; <code>fig_comparison</code> (two datasets)</td></tr>
+      <tr><td><span class="chip s-input">utils.R</span></td><td><code>make_crn_seeds</code>, <code>draw_replicate_rng</code>, <code>safely_run</code>; <code>empty_result</code></td><td><code>crn_seeds</code>; inside <code>run_batch</code> and <code>compute_truth</code></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="config">
+  <div class="col"><h2>Configuration</h2>
+  <p>All tunable values live in <code>config/config.yml</code>. A profile only overrides the keys it lists; everything else comes from <code>default</code>. Choose a profile with <code>Sys.setenv(R_CONFIG_ACTIVE = "…")</code> before <code>tar_make()</code>.</p></div>
+  <div class="tbl"><table>
+    <thead><tr><th>Key</th><th>default</th><th>smoke</th><th>two_datasets</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>active_datasets</code></td><td>maringe</td><td>maringe, synpuf</td><td>maringe, synpuf</td><td>Datasets the pipeline builds targets for (smoke checks both code paths)</td></tr>
+      <tr><td><code>B</code></td><td>10,000</td><td>20</td><td>10,000</td><td>Replicates per scenario (θ* and 0)</td></tr>
+      <tr><td><code>batch_size</code></td><td>250</td><td>10</td><td>250</td><td>Replicates per branch; results do not depend on it</td></tr>
+      <tr><td><code>truth: n_target, n_rep</code></td><td>50,000; 24</td><td>2,000; 2</td><td>50,000; 24</td><td>Size and number of the large datasets that define ψ(θ)</td></tr>
+      <tr><td><code>calibration</code></td><td>12 reps, 4 steps, tol 0.005</td><td>1 rep, 2 steps</td><td>as default</td><td>Secant search for θ*</td></tr>
+      <tr><td><code>workers</code></td><td>2</td><td>1</td><td>2</td><td>Parallel workers (crew); sequential if crew is not installed</td></tr>
+      <tr><td><code>datasets$maringe$pipeline</code></td><td colspan="3">grace period 182.62 days; censoring models on age, sex, performance status, stage, deprivation, Charlson, emergency</td><td>CCW design of Maringe et al.</td></tr>
+      <tr><td><code>datasets$maringe$censoring</code></td><td colspan="3">model: none (administrative censoring at 365.24 days only)</td><td>SynPUF uses <code>weibull</code>; <code>fixed</code> keeps observed censoring times</td></tr>
+      <tr><td><code>render_report</code></td><td>–</td><td>–</td><td>true</td><td>Render the Quarto colleague report (needs the Quarto CLI)</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="col" id="rng">
+  <h2>Random numbers and reproducibility</h2>
+  <ul class="points">
+    <li><code>make_crn_seeds(seed_master, B)</code> draws one seed per replicate index b, once. Replicate b gets the same seed in both scenarios (common random numbers), so the θ* and null scenarios differ only in θ.</li>
+    <li><code>draw_replicate_rng(seed)</code> makes all draws for one replicate in a fixed order: event uniforms, an auxiliary seed, then censoring uniforms. New components are appended at the end, so adding the censoring model left the event-time draws of v0.2 unchanged.</li>
+    <li>The truth uses its own seed (<code>seed_truth</code>) with the same 24 seeds at every θ.</li>
+    <li>Results are identical whatever the batch size or number of workers (tested in <code>test-pipeline.R</code>).</li>
+    <li>Each replicate's estimate, SE, status and error or warning message is stored in <code>sim_results</code>; failed fits are counted and excluded from the measures.</li>
+  </ul>
+</section>
+
+<section class="col" id="run">
+  <h2>Running and reading results</h2>
+<pre><code>testthat::test_dir("tests/testthat")                         # unit tests
+Sys.setenv(R_CONFIG_ACTIVE = "smoke"); targets::tar_make()   # quick end-to-end check
+Sys.unsetenv("R_CONFIG_ACTIVE"); targets::tar_make()         # full run
+source("reports/paper/build_section4.R")                     # Word draft for paper Section 4
+
+targets::tar_visnetwork(targets_only = TRUE)   # interactive dependency graph
+targets::tar_outdated()                        # what would rerun
+targets::tar_read(performance_maringe)          # performance by scenario
+targets::tar_read(sim_results_maringe)          # one row per replicate
+targets::tar_read(table_results_maringe)$performance   # Table 5 as a data.table
+targets::tar_meta(fields = c(name, seconds))   # run time per target</code></pre>
+  <p>To change something, edit the function or the config value and run <code>tar_make()</code> again; only affected targets rerun. For example, changing the DGM covariates reruns <code>dgm</code> and everything after it, but not <code>obs_result</code>.</p>
+</section>
+
+<section class="col" id="versions">
+  <h2>Versions</h2>
+  <ul class="points">
+    <li><code>main</code>: current work for the paper, Maringe only. SynPUF is still in the code, the tests and the smoke run.</li>
+    <li><code>archive/two-datasets</code>: the pipeline exactly as run on 5 Oct 2026 (Maringe and SynPUF). Kept unchanged.</li>
+    <li><code>archive/2026-10-05_two_datasets/</code> on <code>main</code>: that run's report, figures and targets store.</li>
+    <li>To rerun the two-dataset comparison with today's code (including the SynPUF censoring model): <code>Sys.setenv(R_CONFIG_ACTIVE = "two_datasets")</code>.</li>
+  </ul>
+</section>
+
+<section class="col" id="open">
+  <h2>Open points for the next iteration</h2>
+  <ul class="points">
+    <li>Add <code>renv.lock</code> from your machine; this run used R 4.3.3, targets 1.4.1 and tarchetypes 0.7.12 without crew (sequential).</li>
+    <li>Move <code>build_section4.R</code> into the pipeline once the text is stable.</li>
+    <li>Rewrite <code>qba_report.qmd</code> for one dataset, or retire it in favour of the paper outputs.</li>
+  </ul>
+</section>
+</div>

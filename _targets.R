@@ -1,7 +1,7 @@
 # _targets.R - modelling-bias QBA simulation (CCW): observed-effect and no-effect scenarios
-# for the datasets in cfg$active_datasets (default: SynPUF only). Run with targets::tar_make();
-# smoke run: Sys.setenv(R_CONFIG_ACTIVE = "smoke"); original two-dataset comparison:
-# Sys.setenv(R_CONFIG_ACTIVE = "two_datasets").
+# for the datasets in cfg$active_datasets (default: Maringe only, as in the paper).
+# Run with targets::tar_make(); smoke run: Sys.setenv(R_CONFIG_ACTIVE = "smoke");
+# two-dataset comparison with report: Sys.setenv(R_CONFIG_ACTIVE = "two_datasets").
 library(targets)
 library(tarchetypes)
 
@@ -50,7 +50,26 @@ per_dataset <- tar_map(
   # Summaries and correction (paper Steps 6-7)
   tar_target(performance, summarise_performance(sim_results, truth_table)),
   tar_target(performance_rsimsum, rsimsum_check(sim_results, truth_table)),
-  tar_target(correction, correct_estimate(obs_result, performance, sim_results, ds))
+  tar_target(correction, correct_estimate(obs_result, performance, sim_results, ds)),
+
+  # Publication outputs (paper Section 4): tables, adjusted performance, figures
+  tar_target(raw_data, read_raw_data(base_file, ds)),
+  tar_target(table_baseline, make_baseline_table(raw_data, ds, cfg$datasets[[ds]])),
+  tar_target(perf_adjusted, evaluate_adjustment(sim_results, truth_table)),
+  tar_target(table_results, make_results_table(
+    obs_result, dgm, calibration, truth_table, performance, correction, perf_adjusted,
+    cfg$datasets[[ds]]
+  )),
+  tar_target(paper_figures, save_paper_figures(
+    performance, perf_adjusted, sim_results, base_data, dgm, correction$z_crit_calibrated,
+    cfg$datasets[[ds]], file.path("reports", "paper", ds)
+  ), format = "file"),
+  tar_target(fig_protocol, save_plot(
+    plot_protocol(ds, cfg$datasets[[ds]]$pipeline,
+                  if (ds == "maringe") 365.24 else cfg$datasets[[ds]]$horizon),
+    file.path("reports", paste0("fig_protocol_", ds, ".png")), width = 8.5,
+    height = if (ds == "maringe") 4.6 else 5
+  ), format = "file")
 )
 
 list(
@@ -75,42 +94,13 @@ list(
   # Outputs
   tar_target(fig_estimates, save_plot(plot_estimates(sim_all, performance_all, ds_labels),
                                       "reports/fig_estimates.png", height = 5.5), format = "file"),
-  if ("synpuf" %in% active) {
-    tar_target(fig_protocol_synpuf, save_plot(
-      plot_protocol("synpuf", cfg$datasets$synpuf$pipeline, cfg$datasets$synpuf$horizon),
-      "reports/fig_protocol_synpuf.png", width = 8.5, height = 5
-    ), format = "file")
-  },
   tar_target(session, sessioninfo::session_info()),
-
-  # Publication outputs for the SynPUF case study (paper Section 4)
-  if ("synpuf" %in% active) {
-    list(
-      tar_target(raw_synpuf, haven::read_sas(base_file_synpuf)),
-      tar_target(table_baseline, make_baseline_table(raw_synpuf, cfg$datasets$synpuf)),
-      tar_target(perf_adjusted, evaluate_adjustment(sim_results_synpuf, truth_table_synpuf)),
-      tar_target(table_results, make_results_table(
-        obs_result_synpuf, dgm_synpuf, calibration_synpuf, truth_table_synpuf,
-        performance_synpuf, correction_synpuf, perf_adjusted
-      )),
-      tar_target(paper_figures, save_paper_figures(
-        performance_synpuf, perf_adjusted, sim_results_synpuf, base_data_synpuf, dgm_synpuf,
-        "reports/paper", correction_synpuf$z_crit_calibrated
-      ), format = "file")
-    )
-  },
 
   # Two-dataset comparison and colleague report (two_datasets profile only)
   if (length(active) > 1) {
-    list(
-      tar_target(fig_comparison, save_plot(plot_comparison(performance_all, ds_labels),
-                                           "reports/fig_comparison.png", height = 5.5),
-                 format = "file"),
-      tar_target(fig_protocol_maringe, save_plot(
-        plot_protocol("maringe", cfg$datasets$maringe$pipeline, 365.24),
-        "reports/fig_protocol_maringe.png", width = 8.5, height = 4.6
-      ), format = "file"),
-      tar_quarto(report, "reports/qba_report.qmd", quiet = FALSE)
-    )
-  }
+    tar_target(fig_comparison, save_plot(plot_comparison(performance_all, ds_labels),
+                                         "reports/fig_comparison.png", height = 5.5),
+               format = "file")
+  },
+  if (isTRUE(cfg$render_report)) tar_quarto(report, "reports/qba_report.qmd", quiet = FALSE)
 )

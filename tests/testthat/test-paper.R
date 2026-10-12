@@ -1,11 +1,19 @@
-test_that("baseline table has Table S2 columns and counts that add up", {
-  raw <- haven::read_sas(test_path("..", "..", spec_s$file))
-  tb <- make_baseline_table(raw, spec_s)
-  expect_named(tb, c("label", "indent", "n1", "p1", "n0", "p0", "smd"))
-  tot <- tb[label == "Total"]
-  expect_equal(as.integer(tot$n1) + as.integer(tot$n0), nrow(raw))
-  men <- tb[label == "Men"]; women <- tb[label == "Women"]
-  expect_equal(as.integer(men$n1) + as.integer(women$n1), as.integer(tot$n1))
+test_that("baseline tables have Table S2 columns and counts that add up", {
+  for (x in list(list("maringe", spec_m), list("synpuf", spec_s))) {
+    raw <- read_raw_data(test_path("..", "..", x[[2]]$file), x[[1]])
+    tb <- make_baseline_table(raw, x[[1]], x[[2]])
+    expect_named(tb, c("label", "indent", "n1", "p1", "n0", "p0", "smd"))
+    tot <- tb[label == "Total"]
+    expect_equal(as.integer(tot$n1) + as.integer(tot$n0), nrow(raw))
+    men <- tb[label == "Men"]; women <- tb[label == "Women"]
+    expect_equal(as.integer(men$n1) + as.integer(women$n1), as.integer(tot$n1))
+  }
+})
+
+test_that("Maringe table reproduces the surgery split of the data", {
+  raw <- read_raw_data(test_path("..", "..", spec_m$file), "maringe")
+  tb <- make_baseline_table(raw, "maringe", spec_m)
+  expect_equal(as.integer(tb[label == "Total", n1]), sum(!is.na(raw$timetosurgery)))
 })
 
 test_that("cross-fitted adjustment returns both analyses and sensible proportions", {
