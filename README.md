@@ -44,7 +44,8 @@ on the number of workers. The calibration search is sequential, so it takes abou
 the number of workers.
 
 **More replicates.** `B` (replicates per scenario) is in `config/config.yml`. For a precision check
-without touching the paper run, use the `b100k` profile (100,000 per scenario) with its own store;
+without touching the paper run, use the `b100k` profile (100,000 per scenario and 96 instead of 24 large
+datasets for the true value, which halves its Monte Carlo error) with its own store;
 its figures go to `reports/b100k/` and the report is not re-rendered:
 
 ```r

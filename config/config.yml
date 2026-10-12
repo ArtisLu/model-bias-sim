@@ -85,3 +85,6 @@ two_datasets:
 b100k:
   B: 100000
   batch_size: 1000     # 200 branches instead of 800; less overhead per branch
+  truth:
+    n_target: 50000
+    n_rep: 96          # truth MCSE ~0.0024 (default 24: ~0.0048), so the bias MCSE shrinks too
