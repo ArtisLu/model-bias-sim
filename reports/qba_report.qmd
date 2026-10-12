@@ -134,6 +134,28 @@ knitr::kable(tb[, -"indent"], align = "lrrrrr", escape = FALSE)
 knitr::include_graphics(fig(targets::tar_read(fig_protocol_maringe, store = store)), error = FALSE)
 ```
 
+**Covariate balance at 6 months** (as Figure S2 of Maringe et al.). Among clones still at risk at the end of the grace period, the arms differ strongly before weighting; the censoring weights reduce, but do not remove, these differences.
+
+```{r fig-balance}
+#| fig-cap: "Standardised differences between the surgery and no-surgery arms among clones at risk at day 182.62, before and after censoring weights. Dashed lines: ±10%."
+#| out-width: "75%"
+knitr::include_graphics(fig(grep("\\.png$", targets::tar_read(fig_balance_maringe, store = store), value = TRUE)), error = FALSE)
+```
+
+```{r balance-text}
+bal <- targets::tar_read(balance_maringe, store = store)
+bw <- bal[weighting == "Weighted"]
+bu <- bal[weighting == "Unweighted"]
+over <- bw[abs(smd) > 10][order(-abs(smd))]
+lab_b <- c(age_c = "age", sex = "sex", perf0 = "performance status 0", perf1 = "performance status 1",
+           perf2 = "performance status 2", stage = "stage", deprivation = "deprivation",
+           charlson0 = "Charlson 0", charlson1 = "Charlson 1", charlson2 = "Charlson 2",
+           emergency = "emergency presentation")
+over_txt <- paste0(lab_b[over$term], " ", formatC(over$smd, format = "f", digits = 1), "%", collapse = ", ")
+```
+
+Before weighting, `r sum(abs(bu$smd) > 10)` of `r nrow(bu)` covariate terms differ by more than 10% (largest `r formatC(max(abs(bu$smd)), format = "f", digits = 1)`%); after weighting, `r nrow(over)` still do (`r over_txt`). In the registry data of Maringe et al. all weighted differences were within 10%; in this 200-patient example the weight models leave residual imbalance. This is consistent with the no-effect scenario, where the CCW estimate stays below HR = 1 even with unlimited data (Section 2.2).
+
 ## 1.2 Run time
 
 ```{r tab-runtime}

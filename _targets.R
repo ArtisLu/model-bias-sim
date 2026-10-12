@@ -68,6 +68,10 @@ per_dataset <- tar_map(
     performance, perf_adjusted, sim_results, base_data, dgm, correction$z_crit_calibrated,
     cfg$datasets[[ds]], file.path("reports", "paper", ds)
   ), format = "file"),
+  tar_target(balance, ccw_balance(base_data, cfg$datasets[[ds]]$pipeline,
+                                   cfg$datasets[[ds]][["dgm"]]$covariates)),
+  tar_target(fig_balance, save_balance_figure(balance, cfg$datasets[[ds]],
+                                              file.path("reports", "paper", ds)), format = "file"),
   tar_target(fig_protocol, save_plot(
     plot_protocol(ds, cfg$datasets[[ds]]$pipeline,
                   if (ds == "maringe") 365.24 else cfg$datasets[[ds]]$horizon),

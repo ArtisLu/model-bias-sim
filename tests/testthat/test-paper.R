@@ -30,3 +30,12 @@ test_that("cross-fitted adjustment returns both analyses and sensible proportion
   expect_lt(abs(adj_bias), abs(pa[analysis == "CCW" & measure == "Bias (log HR)", value]))
   expect_true(all(pa[measure != "Bias (log HR)", value] >= 0 & pa[measure != "Bias (log HR)", value] <= 1))
 })
+
+test_that("balance at the grace period uses the clones still at risk and both weightings", {
+  b <- ccw_balance(base_test, spec_m$pipeline, spec_m$dgm$covariates)
+  expect_setequal(unique(b$weighting), c("Unweighted", "Weighted"))
+  at_risk <- base_test[time > spec_m$pipeline$grace]
+  expect_equal(b$n1[1], sum(at_risk$trt_time <= spec_m$pipeline$grace))
+  expect_equal(b$n0[1], sum(at_risk$trt_time > spec_m$pipeline$grace))
+  expect_true(all(is.finite(b$smd)))
+})

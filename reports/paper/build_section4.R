@@ -13,7 +13,8 @@ ds <- "maringe"
 stopifnot(ds %in% unlist(cfg$active_datasets))
 # Targets of the paper dataset under short names (e.g. performance_maringe -> performance)
 for (nm in c("table_baseline", "table_results", "perf_adjusted", "performance", "correction",
-             "calibration", "dgm", "obs_result", "base_data", "truth_table", "sim_results")) {
+             "calibration", "dgm", "obs_result", "base_data", "truth_table", "sim_results",
+             "balance")) {
   assign(nm, targets::tar_read_raw(paste0(nm, "_", ds)))
 }
 spec <- cfg$datasets[[ds]]
@@ -167,7 +168,8 @@ doc <- txt(doc, paste0(
   "end gives the weights from that time onwards. Both models include age, sex, performance status, stage, ",
   "deprivation score, Charlson index and emergency presentation. The strategies are compared by a ",
   "weighted Cox model with the strategy as the only covariate, Efron ties and a robust, patient-clustered ",
-  "variance. Figure 4 shows how example patients are cloned, censored and weighted."
+  "variance. Figure 4 shows how example patients are cloned, censored and weighted, and Figure S2 the ",
+  "covariate balance between the strategies at 6 months before and after weighting."
 ))
 doc <- txt(doc, paste0(
   "Preserved data. Not only the baseline data are maintained but also each patient's observed date of ",
@@ -305,6 +307,20 @@ doc <- body_add_flextable(doc, dgm_ft(table_results$dgm), align = "left")
 doc <- note(doc, paste0(dgm$n_events, " deaths. Surgery enters as a time-varying covariate (0 before, 1 from the surgery date)."))
 doc <- caption(doc, "Figure S1: ", "Fit of the Weibull prediction model: Kaplan–Meier estimate in the original data versus the survival predicted by the Weibull model (averaged over patients, with each patient's observed surgery date).")
 doc <- add_fig(doc, file.path(fig_dir, "fig_model_fit.png"), 4.6, 4.6 * 4.6 / 6)
+
+bw <- balance[weighting == "Weighted"]
+bu <- balance[weighting == "Unweighted"]
+doc <- caption(doc, "Figure S2: ", paste0(
+  "Standardised differences between the surgery and no-surgery strategies among clones at risk at the end ",
+  "of the grace period (", bu$n1[1], " and ", bu$n0[1], " clones), before and after censoring weights. ",
+  "Dashed lines: ±10%."
+))
+doc <- add_fig(doc, file.path(fig_dir, "fig_balance.png"), 5.2, 5.2 * 5 / 7)
+doc <- note(doc, paste0(
+  "Before weighting ", sum(abs(bu$smd) > 10), " of ", nrow(bu), " covariate terms differ by more than 10%; ",
+  "after weighting ", sum(abs(bw$smd) > 10), " (largest ", f1(max(abs(bw$smd))), "%). [Maringe et al. report ",
+  "all weighted differences within 10% in their registry data; the 200-patient example does not reach this.]"
+))
 
 print(doc, target = out_file)
 message("Written: ", out_file)

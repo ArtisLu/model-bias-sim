@@ -391,3 +391,94 @@ save_paper_figures <- function(performance, perf_adj, sim_results, data, dgm, z_
     c(png, eps)
   }))
 }
+
+#' Covariate balance between the strategy arms at the end of the grace period (Figure S2 of
+#' Maringe et al. 2020): standardised differences before and after censoring weights
+#' @param data Base data; @param spec Pipeline spec.
+#' @param covariates Covariates to show (factors are shown per level).
+#' @return data.table: term, weighting, smd (%), n0, n1 (clones at risk in each arm).
+ccw_balance <- function(data, spec, covariates) {
+  long <- run_ccw_long(data, spec)
+  # Balance is assessed where artificial censoring ends: grace period or longest window
+  t_star <- if (spec$design == "grace_vs_none") spec$grace else max(unlist(spec$windows))
+  at_risk <- long[start <= t_star & stop > t_star, .(id, arm, w)]
+  X <- stats::model.matrix(stats::reformulate(covariates), data = data)[, -1, drop = FALSE]
+  # Factors get every level (the reference level too), as in a Table 1
+  for (v in covariates[vapply(data[, ..covariates], is.factor, logical(1))]) {
+    lv <- levels(data[[v]])
+    X <- cbind(X, stats::setNames(as.data.frame(as.integer(data[[v]] == lv[1])), paste0(v, lv[1])))
+  }
+  X <- as.matrix(X)
+  d <- merge(at_risk, data.table::data.table(id = data$id, X), by = "id")
+  smd <- function(x, a, w) {
+    m1 <- stats::weighted.mean(x[a == 1], w[a == 1]); m0 <- stats::weighted.mean(x[a == 0], w[a == 0])
+    v1 <- sum(w[a == 1] * (x[a == 1] - m1)^2) / sum(w[a == 1])
+    v0 <- sum(w[a == 0] * (x[a == 0] - m0)^2) / sum(w[a == 0])
+    # Pooled SD from the unweighted samples, so both rows share one denominator
+    s <- sqrt((stats::var(x[a == 1]) + stats::var(x[a == 0])) / 2)
+    100 * (m1 - m0) / s
+  }
+  out <- data.table::rbindlist(lapply(colnames(X), function(v) {
+    x <- d[[v]]
+    data.table::data.table(
+      term = v, weighting = c("Unweighted", "Weighted"),
+      smd = c(smd(x, d$arm, rep(1, nrow(d))), smd(x, d$arm, d$w))
+    )
+  }))
+  out[, `:=`(n0 = sum(d$arm == 0), n1 = sum(d$arm == 1), t_star = t_star)]
+  out[]
+}
+
+#' Long CCW data (clones, intervals, weights) exactly as used by the pipeline
+#' @param data Patient-level data; @param spec Pipeline spec.
+#' @return Stacked long data (id, arm, start, stop, ev, w).
+run_ccw_long <- function(data, spec) {
+  switch(spec$design,
+    grace_vs_none = ccw_grace_vs_none(data, spec),
+    window_vs_window = ccw_window_vs_window(data, spec)
+  )
+}
+
+#' Figure: standardised differences between arms before and after weighting
+#' @param bal From `ccw_balance()`; @param spec Dataset config (for labels).
+#' @return ggplot.
+plot_balance <- function(bal, spec) {
+  lab <- c(
+    age_c = "Age", sex = "Women",
+    perf0 = "Performance status 0", perf1 = "Performance status 1", perf2 = "Performance status 2",
+    stage = "TNM stage II", deprivation = "Deprivation score",
+    charlson0 = "Charlson index 0", charlson1 = "Charlson index 1", charlson2 = "Charlson index 2",
+    emergency = "Emergency presentation", renal = "End-stage renal disease", nonwhite = "Non-white race"
+  )
+  d <- data.table::copy(bal)
+  d[, term := ifelse(term %in% names(lab), lab[term], term)]
+  lev <- unique(d$term)
+  d[, term := factor(term, levels = rev(lev[order(match(lev, lab))]))]
+  d[, weighting := factor(weighting, levels = c("Unweighted", "Weighted"))]
+  ggplot2::ggplot(d, ggplot2::aes(smd, term, colour = weighting, shape = weighting)) +
+    ggplot2::geom_vline(xintercept = c(-10, 10), linetype = "dashed") +
+    ggplot2::geom_vline(xintercept = 0, colour = "grey40") +
+    ggplot2::geom_point(size = 3) +
+    ggplot2::scale_colour_manual(values = c(Unweighted = "black", Weighted = "red"), name = NULL) +
+    ggplot2::scale_shape_manual(values = c(Unweighted = 1, Weighted = 16), name = NULL) +
+    ggplot2::labs(
+      x = "Standardised difference, surgery vs no-surgery arm (%)", y = NULL,
+      subtitle = paste0("Clones at risk at day ", formatC(d$t_star[1], format = "f", digits = 0),
+                        ": ", d$n1[1], " surgery, ", d$n0[1], " no surgery")
+    ) +
+    theme_paper() +
+    ggplot2::theme(legend.position = "bottom")
+}
+
+#' Save the balance figure (PNG 600 dpi and EPS)
+#' @param bal From `ccw_balance()`; @param spec Dataset config; @param dir Output folder.
+#' @return File paths.
+save_balance_figure <- function(bal, spec, dir) {
+  dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+  p <- plot_balance(bal, spec)
+  png <- file.path(dir, "fig_balance.png")
+  eps <- file.path(dir, "fig_balance.eps")
+  ggplot2::ggsave(png, p, width = 7, height = 5, dpi = 600, bg = "white")
+  ggplot2::ggsave(eps, p, width = 7, height = 5, device = grDevices::cairo_ps)
+  c(png, eps)
+}
