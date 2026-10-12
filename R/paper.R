@@ -482,3 +482,20 @@ save_balance_figure <- function(bal, spec, dir) {
   ggplot2::ggsave(eps, p, width = 7, height = 5, device = grDevices::cairo_ps)
   c(png, eps)
 }
+
+#' Render the Quarto report for one results store into the profile's output folder
+#' @param qmd Report source; @param store Results store of this run; @param out_dir Output folder.
+#' @param deps Targets the report reads (passed only so the report reruns when they change).
+#' @return Path of the HTML report.
+render_report <- function(qmd, store, out_dir, deps) {
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  src <- file.path(out_dir, basename(qmd))
+  # Other profiles render a temporary copy, so the paper report in reports/ is never touched
+  copied <- normalizePath(src, mustWork = FALSE) != normalizePath(qmd)
+  if (copied) {
+    file.copy(qmd, src, overwrite = TRUE)
+    on.exit(unlink(src), add = TRUE)
+  }
+  quarto::quarto_render(src, execute_params = list(store = normalizePath(store)), quiet = TRUE)
+  sub("\\.qmd$", ".html", src)
+}

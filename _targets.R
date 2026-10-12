@@ -16,9 +16,9 @@ ds_labels <- vapply(cfg$datasets[active], `[[`, character(1), "label")
 # precision run cannot overwrite the paper figures
 profile <- Sys.getenv("R_CONFIG_ACTIVE", "default")
 out_dir <- if (profile == "default") "reports" else file.path("reports", profile)
-# Report on the Maringe case study: not in smoke runs, and only if Quarto is installed.
+# Report on the Maringe case study (into out_dir): not in smoke runs, and only if Quarto is installed.
 # Kept out of cfg on purpose: every target depends on cfg, so a new key would rerun everything.
-render_report <- "maringe" %in% active && profile == "default" &&
+do_report <- "maringe" %in% active && profile != "smoke" &&
   nzchar(Sys.which("quarto"))
 # Parallel workers need crew; without it the pipeline runs sequentially. QBA_WORKERS overrides
 # cfg$workers without editing the config (every target depends on cfg, so editing it reruns all).
@@ -127,7 +127,19 @@ list(
                format = "file")
   },
   # Colleague report on the Maringe case study (needs the Quarto CLI)
-  if (render_report) {
-    tar_quarto(report, "reports/qba_report.qmd", quiet = TRUE)
+  if (do_report) {
+    list(
+      tar_target(report_qmd, "reports/qba_report.qmd", format = "file"),
+      tar_target(report, render_report(
+        report_qmd, targets::tar_path_store(), out_dir,
+        deps = list(
+          performance_maringe, correction_maringe, calibration_maringe, dgm_maringe,
+          obs_result_maringe, base_data_maringe, sim_results_maringe, truth_table_maringe,
+          perf_adjusted_maringe, table_baseline_maringe, table_results_maringe,
+          performance_rsimsum_maringe, balance_maringe, paper_figures_maringe,
+          fig_protocol_maringe, fig_balance_maringe, run_settings, session
+        )
+      ), format = "file")
+    )
   }
 )

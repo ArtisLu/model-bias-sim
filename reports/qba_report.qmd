@@ -13,6 +13,8 @@ format:
     fig-width: 7
     html-math-method: mathml
     code-tools: false
+params:
+  store: ""
 execute:
   echo: false
   warning: false
@@ -21,16 +23,18 @@ execute:
 
 ```{r setup}
 library(data.table)
-# Works whether Quarto runs from the project root or from reports/
-root <- if (dir.exists("_targets")) "." else ".."
-store <- file.path(root, "_targets")
+# Project root = first folder upwards that holds _targets.R (the report may be rendered elsewhere)
+root <- normalizePath(".")
+while (!file.exists(file.path(root, "_targets.R")) && dirname(root) != root) root <- dirname(root)
+# Results store: passed by the pipeline (one per config profile), else the paper run
+store <- if (nzchar(params$store)) params$store else file.path(root, "_targets")
 targets::tar_load(c(
   performance_maringe, correction_maringe, calibration_maringe, dgm_maringe, obs_result_maringe,
   base_data_maringe, sim_results_maringe, truth_table_maringe, perf_adjusted_maringe,
   table_baseline_maringe, table_results_maringe, performance_rsimsum_maringe, session
 ), store = store)
-# Figure targets store paths relative to the project root; this file lives in reports/
-fig <- function(path) sub("^reports/", "", path)
+# Figure targets store paths relative to the project root
+fig <- function(path) file.path(root, path)
 figs <- targets::tar_read(paper_figures_maringe, store = store)
 fig_png <- function(name) fig(grep(paste0(name, "\\.png$"), figs, value = TRUE))
 # Source of one function (with its roxygen header) for the code appendix
