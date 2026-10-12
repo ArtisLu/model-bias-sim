@@ -1,7 +1,7 @@
 # _targets.R - modelling-bias QBA simulation (CCW): observed-effect and no-effect scenarios
 # for the datasets in cfg$active_datasets (default: Maringe only, as in the paper).
 # Run with targets::tar_make(); smoke run: Sys.setenv(R_CONFIG_ACTIVE = "smoke");
-# two-dataset comparison with report: Sys.setenv(R_CONFIG_ACTIVE = "two_datasets").
+# two-dataset comparison: Sys.setenv(R_CONFIG_ACTIVE = "two_datasets").
 library(targets)
 library(tarchetypes)
 
@@ -9,6 +9,10 @@ tar_source("R")
 cfg <- config::get(file = "config/config.yml")
 active <- unlist(cfg$active_datasets)
 ds_labels <- vapply(cfg$datasets[active], `[[`, character(1), "label")
+# Report on the Maringe case study: not in smoke runs, and only if Quarto is installed.
+# Kept out of cfg on purpose: every target depends on cfg, so a new key would rerun everything.
+render_report <- "maringe" %in% active && Sys.getenv("R_CONFIG_ACTIVE") != "smoke" &&
+  nzchar(Sys.which("quarto"))
 # Parallel workers need crew; without it the pipeline runs sequentially
 use_crew <- cfg$workers > 1 && requireNamespace("crew", quietly = TRUE)
 
@@ -96,11 +100,14 @@ list(
                                       "reports/fig_estimates.png", height = 5.5), format = "file"),
   tar_target(session, sessioninfo::session_info()),
 
-  # Two-dataset comparison and colleague report (two_datasets profile only)
+  # Two-dataset comparison figure (two_datasets profile only)
   if (length(active) > 1) {
     tar_target(fig_comparison, save_plot(plot_comparison(performance_all, ds_labels),
                                          "reports/fig_comparison.png", height = 5.5),
                format = "file")
   },
-  if (isTRUE(cfg$render_report)) tar_quarto(report, "reports/qba_report.qmd", quiet = FALSE)
+  # Colleague report on the Maringe case study (needs the Quarto CLI)
+  if (render_report) {
+    tar_quarto(report, "reports/qba_report.qmd", quiet = TRUE)
+  }
 )

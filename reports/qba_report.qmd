@@ -1,8 +1,8 @@
 ---
 title: "Does clone-censor-weighting carry modelling bias?"
-subtitle: "Modelling-bias QBA on two public CCW datasets: Maringe lung cancer vs SynPUF MI cohort"
+subtitle: "Modelling-bias QBA of the CCW analysis in the Maringe lung cancer example"
 author: "Artis Luguzis"
-date: "5 October 2026"
+date: "12 October 2026"
 format:
   html:
     embed-resources: true
@@ -24,10 +24,15 @@ library(data.table)
 # Works whether Quarto runs from the project root or from reports/
 root <- if (dir.exists("_targets")) "." else ".."
 store <- file.path(root, "_targets")
-targets::tar_load(c(performance_all, correction_all, calibration_all, dgm_all, obs_all,
-                    base_all, rsimsum_all, sim_all, session), store = store)
-# Figures are written next to this file by the pipeline
-fig <- function(path) basename(path)
+targets::tar_load(c(
+  performance_maringe, correction_maringe, calibration_maringe, dgm_maringe, obs_result_maringe,
+  base_data_maringe, sim_results_maringe, truth_table_maringe, perf_adjusted_maringe,
+  table_baseline_maringe, table_results_maringe, performance_rsimsum_maringe, session
+), store = store)
+# Figure targets store paths relative to the project root; this file lives in reports/
+fig <- function(path) sub("^reports/", "", path)
+figs <- targets::tar_read(paper_figures_maringe, store = store)
+fig_png <- function(name) fig(grep(paste0(name, "\\.png$"), figs, value = TRUE))
 # Source of one function (with its roxygen header) for the code appendix
 fun_src <- function(file, name) {
   x <- readLines(file.path(root, "R", file))
@@ -39,303 +44,274 @@ fun_src <- function(file, name) {
 }
 f2 <- function(x) formatC(x, format = "f", digits = 2)
 f3 <- function(x) formatC(x, format = "f", digits = 3)
+n0 <- function(x) format(x, big.mark = ",")
 pct <- function(x, d = 1) paste0(formatC(100 * x, format = "f", digits = d), "%")
 hr <- function(x) f2(exp(x))
 ci <- function(lo, hi) paste0(hr(lo), "–", hr(hi))
 cfg <- config::get(file = file.path(root, "config", "config.yml"))
-P <- function(ds, sc) performance_all[dataset == ds & scenario == sc]
-mo <- P("maringe", "observed"); m0 <- P("maringe", "null")
-so <- P("synpuf", "observed"); s0 <- P("synpuf", "null")
-cm <- correction_all[dataset == "maringe"]; cs <- correction_all[dataset == "synpuf"]
-calm <- calibration_all$calibration_maringe; cals <- calibration_all$calibration_synpuf
-dm <- dgm_all$dgm_maringe; dsn <- dgm_all$dgm_synpuf
-bm <- base_all$base_data_maringe; bs <- base_all$base_data_synpuf
-B <- mo$B
-n_fail <- sum(performance_all$n_fail)
-fails <- sim_all[status == "error", .N, by = .(dataset, message)]
+spec <- cfg$datasets$maringe
+po <- performance_maringe[scenario == "observed"]
+pn <- performance_maringe[scenario == "null"]
+cr <- correction_maringe
+cal <- calibration_maringe
+dm <- dgm_maringe
+bd <- base_data_maringe
+obs <- obs_result_maringe
+adj <- function(m) perf_adjusted_maringe[analysis == "CCW + QBA adjustment" & measure == m]
+B <- po$B
+n_fail <- po$n_fail + pn$n_fail
 bias_ci <- function(p) paste0(f3(p$bias - 1.96 * p$bias_mcse_total), " to ", f3(p$bias + 1.96 * p$bias_mcse_total))
+n_surv <- sum(bd$status == 0)
+meta <- targets::tar_meta(fields = c(name, type, seconds), targets_only = TRUE, store = store)
+meta <- meta[meta$type %in% c("stem", "branch"), ]
+mins_all <- sum(meta$seconds, na.rm = TRUE) / 60
 ```
 
 ::: {.callout-important appearance="simple"}
 ## Key answer
 
-**Modelling bias in CCW depends on the study: it appears in the small Maringe study, not in the larger SynPUF study.** In each dataset the true effect was set to the observed CCW estimate, and the study was replayed `r format(B, big.mark = ",")` times on the original patients. A separate set of replays checked the case of no treatment effect.
+**The CCW analysis of the Maringe example carries a small but detectable modelling bias, its 95% CIs under-cover, and its type I error is inflated by about half. The QBA adjustments restore nominal coverage and type I error.** The true CCW effect was set to the observed estimate and the study was replayed `r n0(B)` times on the original `r nrow(bd)` patients; a second set of `r n0(B)` replays checked the case of no surgery effect.
 
-| | Maringe lung cancer (n = `r nrow(bm)`, `r sum(bm$status)` deaths) | SynPUF MI cohort (n = `r format(nrow(bs), big.mark = ",")`, `r sum(bs$status)` events) |
+| | CCW as published | CCW + QBA adjustment |
 |---|---|---|
-| Observed CCW HR (95% CI) | `r hr(cm$est_obs)` (`r ci(cm$ci_lo_obs, cm$ci_hi_obs)`) | `r hr(cs$est_obs)` (`r ci(cs$ci_lo_obs, cs$ci_hi_obs)`) |
-| Bias, log-HR (MC 95% interval) | **`r f3(mo$bias)`** (`r bias_ci(mo)`) | `r f3(so$bias)` (`r bias_ci(so)`) |
-| Bias as % of one SE | `r pct(abs(mo$std_bias), 0)` | `r pct(abs(so$std_bias), 0)` |
-| 95% CI coverage (target 95%) | **`r pct(mo$coverage)`** | `r pct(so$coverage)` |
-| Type I error (target 5%) | **`r pct(m0$reject_0)`** | `r pct(s0$reject_0)` |
-| Corrected HR (95% CI), calibrated p | `r hr(cm$est_corr)` (`r ci(cm$ci_lo_corr, cm$ci_hi_corr)`), p = `r f2(cm$p_calibrated)` | `r hr(cs$est_corr)` (`r ci(cs$ci_lo_corr, cs$ci_hi_corr)`), p = `r f2(cs$p_calibrated)` |
+| HR, surgery within 6 months vs not (95% CI) | `r hr(cr$est_obs)` (`r ci(cr$ci_lo_obs, cr$ci_hi_obs)`), p = `r f3(cr$p_obs)` | `r hr(cr$est_corr)` (`r ci(cr$ci_lo_corr, cr$ci_hi_corr)`), calibrated p = `r f3(cr$p_calibrated)` |
+| Bias, log HR (MC 95% interval) | **`r f3(po$bias)`** (`r bias_ci(po)`) | 0 by construction |
+| 95% CI coverage (target 95%) | **`r pct(po$coverage)`** | `r pct(adj("95% CI coverage")$value)` |
+| Type I error (target 5%) | **`r pct(pn$reject_0)`** | `r pct(adj("Type I error")$value)` |
+| Power at the observed effect | `r pct(po$reject_0)` | `r pct(adj("Power")$value)` |
 
-Monte Carlo SE: about 0.3 percentage points for coverage and type I error. Bold cells differ from target by more than their Monte Carlo error.
+Monte Carlo SE: about 0.2–0.3 percentage points for coverage and type I error, 0.006 for the bias. Bold cells differ from the target by more than their Monte Carlo error. Adjusted performance is cross-fitted (corrections estimated on one half of the replays, checked on the other).
 
-- **Maringe:** small point-estimate bias (HR `r pct(abs(exp(mo$bias) - 1))` too favourable to surgery), CIs that under-cover, and a type I error inflated by about half. The analysis is not centred on HR = 1 even with unlimited data.
-- **SynPUF:** no detectable bias, nominal coverage, and a type I error close to 5%. QBA *passes* this analysis.
-- **For the paper:** this is a stronger demonstration than one dataset. It shows that modelling-bias QBA separates a problematic analysis from a sound one — the study-specific check the draft argues for.
+- **Bias:** the average estimate is HR `r hr(po$mean_est)` instead of `r hr(po$truth)`, slightly too favourable to surgery (`r pct(abs(po$std_bias), 0)` of one SE).
+- **Coverage:** the robust SE is `r pct(abs(po$rel_err_modse))` too small, so the CIs cover the truth `r pct(po$coverage)` of the time.
+- **Type I error:** with no surgery effect, `r pct(pn$reject_0)` of studies are significant, `r pct(pn$reject_0_lower)` of them in favour of surgery. Even with unlimited data the null CCW HR would be `r hr(truth_table_maringe[scenario == "null", psi_large_sample])`.
+- **Conclusion unchanged:** the observed result was not significant (p = `r f3(cr$p_obs)`) and is less so after adjustment (p = `r f3(cr$p_calibrated)`).
 :::
+
+**What changed since the 5 October report:** one dataset only (Maringe, as agreed for the paper); `r n0(B)` instead of 5,000 replays per scenario; the censoring mechanism is addressed explicitly (Section 2.3); performance of the adjusted analysis is now evaluated, not only the adjusted estimate. The two-dataset report is kept in `archive/2026-10-05_two_datasets/`. Results agree with that run within Monte Carlo error.
 
 # 1. What was done
 
-The draft paper's steps, applied to the published CCW analysis of each dataset:
+The draft paper's steps, applied to the published CCW analysis of Maringe et al. (2020):
 
 | Paper step | What it means here |
 |---|---|
-| 1. Fit the reference model | Run each dataset's CCW analysis (Section 1.1). |
-| 2. Keep baseline data | All covariates **and each patient's actual treatment date** are kept unchanged. |
-| 3. Predict outcomes | New event times from a Weibull model fitted to each dataset, in which treatment changes the hazard **from the day it starts**. Treatment happens only if the patient has not had the event by that date. The treatment effect is calibrated so that the true CCW effect equals the observed estimate. |
-| 4. Repeat | `r format(B, big.mark = ",")` replays per scenario; two scenarios per dataset: observed effect and no effect (`r format(nrow(sim_all), big.mark = ",")` CCW analyses; `r n_fail` failed). |
+| 1. Fit the reference model | Run the CCW analysis on the original data (Section 1.1). |
+| 2. Keep baseline data | All covariates **and each patient's actual surgery date** are kept unchanged. |
+| 3. Predict outcomes | New death times from a Weibull model fitted to the data, in which surgery changes the hazard **from the day it takes place**. Surgery happens only if the patient is alive on that date. Censoring is predicted as well (Section 2.3). The surgery effect is calibrated so that the true CCW effect equals the observed estimate. |
+| 4. Repeat | `r n0(B)` replays per scenario; two scenarios: observed effect and no effect (`r n0(nrow(sim_results_maringe))` CCW analyses; `r n_fail` failed). |
 | 5. Re-analyse | The same CCW function as on the real data. |
-| 6. Quantify | Bias, CI coverage, type I error, each with Monte Carlo SE. |
-| 7. Adjust | Bias-corrected estimate, widened CI, simulation-calibrated p-value. |
+| 6. Quantify | Bias, CI coverage, type I error and power, each with Monte Carlo SE. |
+| 7. Adjust | Bias-corrected estimate, widened CI, calibrated critical value and p-value; their performance checked by cross-fitting. |
 
-## 1.1 The two datasets
+## 1.1 Data and analysis
 
-| | Maringe et al. (2020) | Webster-Clark et al. (2025) |
-|---|---|---|
-| Data | Simulated elderly lung cancer patients (`ccwr::lungcancer`) | Base cohort from synthetic Medicare claims (SynPUF), shipped with the CCW tutorial |
-| Patients / events | `r nrow(bm)` / `r sum(bm$status)` deaths in 1 year | `r format(nrow(bs), big.mark = ",")` / `r sum(bs$status)` readmissions or deaths in 180 days |
-| Treated (per strategy window) | `r sum(is.finite(bm$trt_time))` operated within 6 months (42 on day 1) | `r sum(bs$trt_time <= 30)` started within 30 days, `r sum(bs$trt_time <= 90)` within 90 days |
-| Contrast | Surgery within 6 months vs no surgery within 6 months | Start within 90 days vs within 30 days of discharge (tutorial's main contrast) |
-| Censoring weights | Control arm: Cox model for time to surgery (7 covariates). Surgery arm: logistic model for surgery by 6 months among survivors | Logistic model at the window end (age, sex, renal disease), up-weighting only those who started in the last 7 days of the window (tutorial method) |
-| Outcome model | Weighted Cox, strategy only, robust SE | Same (the tutorial reports a 180-day risk difference; HR used here so both datasets share one estimand type) |
+The dataset is the simulated example distributed with Maringe et al. (2020; `ccwr::lungcancer`): `r nrow(bd)` elderly patients with stage I–II lung cancer, followed from diagnosis for one year. `r sum(is.finite(bd$trt_time))` had surgery (`r sum(bd$trt_time <= 1)` on day 1) and `r sum(bd$status)` died. It is not the registry cohort of their Table S2, but the table below uses the same layout.
 
-# 2. How the simulation works (methods note) {#methods}
+```{r tab-baseline}
+#| tbl-cap: "Patient characteristics by surgery during follow-up."
+tb <- copy(table_baseline_maringe)
+grp <- attr(table_baseline_maringe, "groups")
+tb[indent == 1L, label := paste0("&emsp;", label)]
+tb[indent == 0L & label != "", label := paste0("**", label, "**")]
+setnames(tb, c("label", "n1", "p1", "n0", "p0", "smd"),
+         c("", paste(grp[1], "N"), "%", paste(grp[2], "N"), "% ", "SMD (%)"))
+knitr::kable(tb[, -"indent"], align = "lrrrrr", escape = FALSE)
+```
 
-**Can we "simulate under CCW"?** Yes, but the *patients* are simulated, not the CCW. CCW is an analysis procedure (cloning, artificial censoring, censoring weights, weighted outcome model), not a model of how outcomes arise, so nothing can be drawn from it directly:
+| Protocol element | Maringe et al. (2020) |
+|---|---|
+| Time zero | Cancer diagnosis |
+| Strategies | Surgery within 6 months (182.62 days, arm 1) vs no surgery within 6 months (arm 0) |
+| Outcome, follow-up | All-cause death; to death or 1 year (365.24 days) |
+| Artificial censoring | Arm 0: on the day of surgery (if within 6 months). Arm 1: at 182.62 days if alive and not operated. Deaths before 6 months without surgery count in both arms. |
+| Censoring weights | Arm 0: Cox model for time to surgery, weights updated at each surgery date. Arm 1: logistic model for surgery by 6 months among survivors. Both on age, sex, performance status, stage, deprivation, Charlson index, emergency presentation. |
+| Outcome model | Weighted Cox, strategy only, Efron ties, robust (patient-clustered) SE |
+| Loss to follow-up | None: every survivor is followed to 1 year |
 
-- The fitted CCW outcome model describes survival under two *strategies*: every patient appears in both arms, with one hazard ratio applying from day 0. A real patient has one history, and before treatment both strategies are identical for that patient, so a hazard that differs between arms during the grace period cannot generate real data.
-- The cloned dataset is not data: clones, artificial censoring and weights are produced by the analysis. Redrawing outcomes on the clones with weights held fixed makes the artificial censoring non-informative and the weights irrelevant. That would test only a weighted Cox fit, not CCW.
+```{r fig-prot}
+#| fig-cap: "How example patients are cloned into both strategies, when each clone is artificially censored, and which part of follow-up carries a censoring weight (drawn with the analysis code's own rules). Shaded: grace period."
+knitr::include_graphics(fig(targets::tar_read(fig_protocol_maringe, store = store)), error = FALSE)
+```
 
-So each outcome-generating model is a patient-level model fitted to the original data: Weibull survival with treatment as a time-varying exposure, h(t) = h₀(t)·exp(γ′X + θ·1{t ≥ treatment date}). Covariates, treatment dates and early loss to follow-up are kept (paper Step 2). New event times are drawn from this model. Each simulated dataset therefore looks like the original data, and the whole CCW procedure is re-run on it.
+# 2. How the simulation works {#methods}
 
-**Why the truth is not θ.** θ is the effect of treatment *once received*, at fixed covariates. The CCW hazard ratio compares *strategies*, and differs from θ for three reasons:
+## 2.1 Simulate patients, not the CCW
 
-1. **Grace-period dilution.** Patients spend the time from day 0 to their treatment date untreated. Early on, both arms share the same hazard.
-2. **Non-proportional hazards.** The strategy hazard ratio changes over time, so a single Cox HR is a weighted average that depends on when events occur.
-3. **Marginal versus conditional.** The CCW model contains the strategy only, and hazard ratios do not collapse over covariates.
+CCW is an analysis procedure (cloning, artificial censoring, censoring weights, weighted outcome model), not a model of how outcomes arise, so nothing can be drawn from it directly:
 
-None of these has a closed form, so the truth ψ(θ) is computed numerically: the base data are copied to about 50,000 patients (same covariate mix and treatment timing), outcomes are simulated, and the same CCW function is run; this is repeated `r cfg$truth$n_rep` times and averaged. With that much data the small-sample bias is gone, and averaging removes the random error. What remains is the value CCW targets.
+- The fitted CCW outcome model describes survival under two *strategies*: every patient appears in both arms, with one hazard ratio from day 0. A real patient has one history, and before surgery both strategies are identical for that patient.
+- The cloned dataset is not data: clones, artificial censoring and weights are produced by the analysis. Redrawing outcomes on the clones with weights held fixed would test only a weighted Cox fit, not CCW.
 
-**Calibration (paper Step 3).** θ is then searched until ψ(θ) equals the observed CCW estimate, so the truth *is* "the CCW model parameter":
+So the outcome-generating model is a patient-level model fitted to the original data: Weibull survival with surgery as a time-varying exposure, h(t) = h₀(t)·exp(γ′X + θ·1{t ≥ surgery date}). Covariates and surgery dates are kept (paper Step 2) and new death times are drawn. Each simulated dataset looks like the original data, and the whole CCW procedure is re-run on it.
+
+## 2.2 Why the truth is not θ, and calibration
+
+θ is the effect of surgery *once received*, at fixed covariates. The CCW hazard ratio compares *strategies* and differs from θ because of grace-period dilution (in the surgery arm patients are untreated until their surgery date), non-proportional strategy hazards, and non-collapsibility (the CCW model contains the strategy only). None of these has a closed form, so the truth ψ(θ) is computed numerically: the base data are copied to `r n0(ceiling(cfg$truth$n_target / nrow(bd)) * nrow(bd))` patients, outcomes are simulated and the same CCW function is run; this is repeated `r cfg$truth$n_rep` times and averaged.
+
+θ is then searched until ψ(θ) equals the observed CCW estimate (paper Step 3):
 
 ```{r tab-calib}
-cal <- rbind(
-  data.table(Dataset = "Maringe", `Fitted θ` = f2(dm$theta_hat), `Calibrated θ*` = f2(calm$theta_star),
-             `Observed CCW log-HR` = f3(cm$est_obs), `Truth ψ(θ*)` = f3(mo$truth),
-             `Truth MCSE` = f3(mo$truth_mcse), `Search steps` = nrow(calm$path)),
-  data.table(Dataset = "SynPUF", `Fitted θ` = f2(dsn$theta_hat), `Calibrated θ*` = f2(cals$theta_star),
-             `Observed CCW log-HR` = f3(cs$est_obs), `Truth ψ(θ*)` = f3(so$truth),
-             `Truth MCSE` = f3(so$truth_mcse), `Search steps` = nrow(cals$path))
-)
-knitr::kable(cal, align = "lrrrrrr")
+#| tbl-cap: "Calibration path (secant search, 12 large datasets per step)."
+p <- copy(cal$path)
+knitr::kable(p[, .(Step = step, `θ (log HR)` = f3(theta), `Weibull HR exp(θ)` = hr(theta),
+                   `ψ(θ), CCW log HR` = f3(psi), `CCW HR` = hr(psi))], align = "rrrrr")
 ```
 
-The final truth (`r cfg$truth$n_rep` datasets) agrees with the observed estimate within Monte Carlo error of the search, which used `r cfg$calibration$n_rep` datasets per step.
+Result: θ\* = `r f3(cal$theta_star)` (Weibull HR `r hr(cal$theta_star)`), against the fitted coefficient θ = `r f3(dm$theta_hat)` (HR `r hr(dm$theta_hat)`). With `r cfg$truth$n_rep` large datasets the truth is ψ(θ\*) = `r f3(po$truth)` (HR `r hr(po$truth)`, MCSE `r f3(po$truth_mcse)`), equal to the observed `r f3(obs$estimate)` within Monte Carlo error. The draft's sentence "θ = −0.70, which results in HR~CCW~ = 0.48" should read: θ\* = −0.70 (Weibull HR `r hr(cal$theta_star)`), which results in HR~CCW~ = `r hr(po$truth)`.
 
-In SynPUF the fitted treatment effect is about zero, which fits the tutorial's note that the synthetic data break the treatment–outcome link. To reproduce the observed HR of `r hr(cs$est_obs)` for "within 90 vs within 30 days", the calibrated world needs a *harmful* treatment (θ\* = `r f2(cals$theta_star)`): starting later then looks better. The exact value of θ\* does not matter for the QBA. What matters is that the true CCW effect equals the observed one.
+**No-effect scenario (θ = 0).** Every patient's outcome is then identical under both strategies, so every estimand is exactly null and the truth needs no estimation. The large-sample value ψ(0) = `r f3(truth_table_maringe[scenario == "null", psi_large_sample])` is computed only as a diagnostic: it shows that CCW is off-centre even with unlimited data.
 
-**Type I error: a separate scenario with θ = 0.** Treatment is given no effect while all covariate effects are kept, and the study is replayed with the same random numbers. Here every patient's outcome is identical under both strategies, so *every* estimand is null at once: conditional and marginal HR, strategy HR, risk differences. The truth is exactly log-HR = 0 and needs no estimation. The large-sample value ψ(0) is still computed, but only as a diagnostic: it shows how far CCW is off-centre even with unlimited data (Maringe `r f3(m0$psi_large_sample)`, SynPUF `r f3(s0$psi_large_sample)`).
+## 2.3 Censoring (paper Section 2.3) {#censoring}
 
-# 3. Results: the two datasets side by side
+The paper says that for time-to-event data the censoring distribution is also predicted, by switching the event/censoring indicator and modelling censoring dependent on covariates, and that the final times are the minimum of event and censoring times. Gerd asked that the censoring mechanism after treatment start be modelled this way.
 
-```{r fig-comp}
-#| fig-cap: "Performance in each dataset. Dashed line: target value. Bars: 95% Monte Carlo interval."
-knitr::include_graphics(fig(targets::tar_read(fig_comparison, store = store)), error = FALSE)
+**How the code does it.** `fit_dgm()` fits a second Weibull model with the indicator switched: loss to follow-up is the event, deaths and the end of follow-up are censored. It uses the same covariates and surgery as a time-varying term, so censoring after treatment start has its own hazard. `simulate_outcomes()` draws a censoring time for each patient by the same inversion as the event time, from its own random numbers, and sets follow-up to min(event, censoring, end of study). This is controlled by `censoring: model` in `config/config.yml` and covered by unit tests.
+
+**Why it changes nothing for Maringe.** In the original data all `r n_surv` survivors are followed to day 365.24: nobody is lost to follow-up. With the indicator switched there are no censoring events, so a censoring model cannot be fitted, and the predicted censoring distribution is the observed one: administrative censoring at one year for every patient. Maringe therefore runs with `censoring: none`, and the simulated data have exactly the original censoring pattern. Artificial censoring of clones is not part of this step: it is produced by the CCW analysis itself in every replay.
+
+**For the paper.** Section 4 should state that the example has administrative censoring only. Two places in the draft disagree with Section 2.3 and could be aligned: the step figure ("keep … censoring times fixed") and Table 1, row "Censoring" ("generated from a separately fitted censoring model"). For Maringe the two descriptions give the same simulated data, because the censoring model reduces to fixed administrative censoring.
+
+# 3. Results
+
+```{r fig-perf}
+#| fig-cap: "Bias, 95% CI coverage, type I error and power of the CCW analysis before and after QBA adjustment. Bars: 95% Monte Carlo interval. Dashed: nominal value. The adjusted bias is zero by construction."
+#| out-width: "100%"
+knitr::include_graphics(fig_png("fig_performance"), error = FALSE)
 ```
 
-**Maringe.** The average estimate is HR `r hr(mo$mean_est)` instead of `r hr(mo$truth)`: a bias of `r f3(mo$bias)`, away from the null and detectable, but small (`r pct(abs(mo$std_bias), 0)` of one SE). The robust SE is `r pct(abs(mo$rel_err_modse))` too small, so coverage is `r pct(mo$coverage)`. With no surgery effect, `r pct(m0$reject_0)` of studies are significant: `r pct(m0$reject_0_lower)` in favour of surgery and only `r pct(m0$reject_0 - m0$reject_0_lower)` against it. Even with unlimited data the null CCW HR would be `r hr(m0$psi_large_sample)`, most likely because the censoring models do not fully capture how surgery decisions depend on patient characteristics. A 5% test would need |z| > `r f2(cm$z_crit_calibrated)` instead of 1.96.
+**Bias.** The average estimate is HR `r hr(po$mean_est)` against a truth of `r hr(po$truth)`: a bias of `r f3(po$bias)` on the log scale (MC 95% interval `r bias_ci(po)`), away from the null, detectable but small (`r pct(abs(po$std_bias), 1)` of one SE).
 
-**SynPUF.** The average estimate is HR `r hr(so$mean_est)` against a truth of `r hr(so$truth)` (bias `r f3(so$bias)`, MC 95% interval `r bias_ci(so)`). The robust SE matches the true variability (relative error `r pct(so$rel_err_modse)`), coverage is `r pct(so$coverage)` and type I error `r pct(s0$reject_0)` (MCSE `r pct(s0$reject_0_mcse)`), with false positives evenly split between directions. Under no effect the large-sample offset is small (`r f3(s0$psi_large_sample)`).
+**Coverage.** The empirical SE is `r f3(po$emp_se)`, the average robust SE `r f3(po$mod_se)` (`r pct(abs(po$rel_err_modse))` too small). Together with the bias this gives coverage of `r pct(po$coverage)` (MCSE `r pct(po$coverage_mcse)`).
 
-**Why the difference?** The two analyses differ in several ways at once, so this demo cannot say which one matters:
+**Type I error.** With no surgery effect, `r pct(pn$reject_0)` (MCSE `r pct(pn$reject_0_mcse)`) of studies reject H0: HR = 1 at 5%; `r pct(pn$reject_0_lower)` in favour of surgery and only `r pct(pn$reject_0 - pn$reject_0_lower)` against it. The null estimates are centred at HR `r hr(pn$mean_est)`, of which `r hr(truth_table_maringe[scenario == "null", psi_large_sample])` would remain with unlimited data, most likely because the censoring-weight models do not fully capture how surgery decisions depend on patient characteristics.
 
-- size and number of events (`r sum(bm$status)` vs `r sum(bs$status)` events);
-- the contrast (treatment vs no treatment, against two treatment windows that share most of their patients);
-- the weighting method (Cox model vs logistic model at the window end);
-- the dataset itself.
+**Power** to detect the observed effect is `r pct(po$reject_0)`, consistent with the observed CI that includes 1.
 
-The paper's discussion predicts that small samples carry the highest risk, which is consistent with what we see. A sub-sampling run (SynPUF reduced to 200 patients) would separate size from design.
-
-```{r fig-est}
-#| fig-cap: "Distribution of the CCW estimate across replays when the true HR equals the observed estimate."
-knitr::include_graphics(fig(targets::tar_read(fig_estimates, store = store)), error = FALSE)
+```{r fig-dist}
+#| fig-cap: "Left: CCW estimates across replays when the true CCW HR equals the observed estimate. Right: z statistics with no surgery effect, with the nominal (±1.96) and calibrated critical values."
+#| out-width: "100%"
+knitr::include_graphics(fig_png("fig_distribution"), error = FALSE)
 ```
 
-# 4. Correction of the observed results (paper Step 7)
+# 4. Adjustment of the observed result (paper Step 7)
 
 ```{r tab-corr}
-corr <- correction_all[, .(
-  Dataset = c(maringe = "Maringe", synpuf = "SynPUF")[dataset],
-  `Observed HR (95% CI)` = paste0(hr(est_obs), " (", ci(ci_lo_obs, ci_hi_obs), ")"),
-  `Observed p` = f3(p_obs),
-  `Corrected HR (95% CI)` = paste0(hr(est_corr), " (", ci(ci_lo_corr, ci_hi_corr), ")"),
-  `Calibrated p` = f3(p_calibrated),
-  `5% critical |z|` = f2(z_crit_calibrated)
-)]
-knitr::kable(corr, align = "lrrrrr")
+#| tbl-cap: "Observed analysis, calibration and QBA adjustment."
+knitr::kable(table_results_maringe$analysis, col.names = c("", "Value"), align = "lr")
 ```
 
-Correction: corrected estimate = observed estimate − bias (the paper's grid search, to first order). The CI is widened by empirical SE / model SE where the model SE is too small. The calibrated p-value is the share of no-effect replays with |z| at least as large as observed. Neither conclusion changes. The Maringe evidence is weaker than the naive analysis suggests; the SynPUF result needs no correction.
+- **Estimate:** observed − bias, the paper's grid search to first order.
+- **CI:** widened by empirical SE / model SE = `r f2(cr$se_inflation)`.
+- **Test:** a 5% test needs |z| > `r f2(cr$z_crit_calibrated)` instead of 1.96; the calibrated p-value is the share of no-effect replays with |z| at least as large as observed.
 
-# 5. Alignment with the draft paper {#alignment}
+**Does the adjusted analysis work?** Applying the adjustments estimated from half of the replays to the other half: coverage `r pct(adj("95% CI coverage")$value)` (MCSE `r pct(adj("95% CI coverage")$mcse)`), type I error `r pct(adj("Type I error")$value)` (MCSE `r pct(adj("Type I error")$mcse)`). Both are back at their targets. The price is lower power (`r pct(adj("Power")$value)` instead of `r pct(po$reject_0)`), because part of the original power came from the inflated type I error.
 
-| Draft paper | What the demo shows |
+```{r tab-perf}
+#| tbl-cap: "Performance before and after QBA adjustment (estimate (MCSE))."
+knitr::kable(table_results_maringe$performance,
+             col.names = c("Performance measure", "CCW as published", "CCW + QBA adjustment"),
+             align = "lrr")
+```
+
+# 5. Alignment with the draft paper (version 0.62, 8 Oct) {#alignment}
+
+| Draft paper | This run |
 |---|---|
-| Abstract: "even an established statistical method such as clone-censor weighting may be affected by modelling bias" | **Supported, with nuance:** affected in Maringe, not in SynPUF. The word "may" is right, and the comparison is a good illustration of why the check must be study-specific. |
-| ISPE 2026 remark (Wang, Zivich et al.): CCW may have low 95% CI coverage | **Partly supported:** under-coverage in Maringe (`r pct(mo$coverage)`), nominal in SynPUF. |
-| Discussion, high-risk use cases (small samples, complex methods) | **Consistent:** the small study shows the problems, the larger one does not (confounded with design; see Section 3). |
-| Section 2.3: set the true effect to the original estimate | **Works, but needs a calibration step for CCW**, because the outcome-generating model cannot be the CCW model itself (methods note). Suggested sentence for 2.3: *"If the analysis estimand differs from the generating parameter (e.g. CCW, marginal estimands), the true value is the large-sample value of the analysis, and the generating parameter is calibrated to it."* |
-| Section 2.6: type I error from a separate null simulation | **Essential, and the simplest scenario:** with no effect every estimand is exactly null, so no truth needs to be estimated. In Maringe it revealed the offset that persists with unlimited data, which the observed-effect scenario alone cannot show. |
-| Section 2.7: correction | **Demonstrated** for both datasets; with one observed-effect scenario, "observed − bias" is the paper's grid search to first order. |
-| Discussion, limitation 2: QBA assumes the model is correct | **Nuance worth adding:** because real treatment dates are kept, a weight model that does not capture treatment decisions *is* detected through the null scenario. |
-| Section 2.4: 10,000 repetitions | Feasible: this run (`r format(nrow(sim_all), big.mark = ",")` CCW analyses plus calibration and large-sample truths) took about 17 minutes on 2 cores. |
+| Section 2.3: censoring predicted by switching the event/censoring indicator | **Implemented**; for Maringe it reduces to administrative censoring at 1 year (Section 2.3 above). Step figure and Table 1 "Censoring" row to be aligned. |
+| Section 4.2: covariates age, sex, performance status, stage, deprivation, Charlson, emergency | **As used** in both the weight models and the Weibull model. |
+| Section 4.3: "θ = −0.70, which results in HR~CCW~ = 0.48" | θ\* = `r f2(cal$theta_star)` is confirmed; HR~CCW~ = `r hr(po$truth)` (= observed), exp(θ\*) = `r hr(cal$theta_star)`. |
+| Discussion: "small but detectable bias … type I error rate (7.1%) and 95% CI coverage (93.7%)" | Bias confirmed (`r f3(po$bias)`); coverage **`r pct(po$coverage)`**; type I error **`r pct(pn$reject_0)`**, not 7.1%. |
+| Discussion: "QBA-based adjustments successfully restored unbiasedness, the nominal type I error rate, and nominal 95% CI coverage" | **Confirmed** by cross-fitting: coverage `r pct(adj("95% CI coverage")$value)`, type I error `r pct(adj("Type I error")$value)`. |
+| Section 4.4 placeholder: "Report also running time on how many cores" | `r f2(mins_all)` minutes on 1 core for the full pipeline (`r n0(2 * B)` replays, calibration and truths). |
+| ISPE 2026 remark (Wang, Zivich et al.): CCW may have low CI coverage | **Supported:** `r pct(po$coverage)`. |
 
 # 6. Caveats and next steps
 
-- B = `r format(B, big.mark = ",")` per scenario (paper: 10,000). The truths are simulated (MCSE about `r f3(mean(performance_all[scenario == "observed", truth_mcse]))`), already included in the bias intervals.
-- `r n_fail` of `r format(nrow(sim_all), big.mark = ",")` analyses failed (all SynPUF: "`r paste(unique(fails$message), collapse = "; ")`"). A simulated event fell within numerical tolerance of a window boundary. This is an artefact of continuous simulated times against day-level data, and rounding simulated times to days would remove it.
-- SynPUF is analysed with an HR rather than the tutorial's 180-day risk difference, so the tutorial's exact estimand is not tested.
-- Next: sub-sample SynPUF to n = 200 to separate sample size from design; check the Maringe null offset with a more flexible censoring model; bootstrap CIs; verification step; B = 10,000.
+- Truths are simulated (MCSE `r f3(po$truth_mcse)`); this is included in the bias interval.
+- Adjusted bias is zero by construction under two-fold cross-fitting; coverage and type I error of the adjusted analysis are genuine checks.
+- The null offset (ψ(0) ≠ 0) suggests the censoring-weight models are not flexible enough; a sensitivity analysis with splines for age and deprivation in the weight models would test this.
+- The Word draft of paper Section 4 (`reports/paper/section4_draft.docx`) uses the same results.
 
 # Appendix
 
-## A1. Performance in all scenarios
+## A1. Performance in both scenarios
 
-```{r tab-perf}
-tab <- performance_all[, .(
-  Dataset = c(maringe = "Maringe", synpuf = "SynPUF")[dataset],
+```{r tab-perf-all}
+tab <- performance_maringe[, .(
   Scenario = c(observed = "Observed effect", null = "No effect")[scenario],
   `θ (DGM)` = f2(theta), `True HR` = hr(truth), `Mean HR` = hr(mean_est),
-  `Bias (log-HR)` = f3(bias), MCSE = f3(bias_mcse_total),
+  `Bias (log HR)` = f3(bias), MCSE = f3(bias_mcse_total),
   `Emp. SE` = f3(emp_se), `Model SE` = f3(mod_se),
-  Coverage = pct(coverage), `Reject HR=1` = pct(reject_0),
-  `Mean events` = formatC(mean_outcomes, format = "f", digits = 1), Failed = n_fail
+  Coverage = pct(coverage), `Reject HR = 1` = pct(reject_0),
+  `Mean deaths` = formatC(mean_outcomes, format = "f", digits = 1), Failed = n_fail
 )]
-knitr::kable(tab, align = "llrrrrrrrrrrr")
+knitr::kable(tab, align = "lrrrrrrrrrrr")
 ```
 
 Measures were cross-checked with `rsimsum` (identical bias, empirical SE, coverage and rejection rate).
 
-## A2. Study protocols (target trial emulation) {#protocols}
+## A2. Data-generating mechanism
 
-| Protocol element | Maringe et al. (2020) | Webster-Clark et al. (2025) tutorial |
-|---|---|---|
-| Eligibility | Lung cancer patients aged ≥ 70 (simulated cohort) | Medicare beneficiaries discharged after a myocardial infarction (synthetic SynPUF cohort) |
-| Time zero | Cancer diagnosis | Discharge from the MI hospitalisation |
-| Treatment | Major surgery | Medication start (`RX_start`) |
-| Strategy of interest (arm 1) | Surgery within 6 months (182.62 days) | Start within 90 days |
-| Comparator (arm 0) | No surgery within 6 months | Start within 30 days |
-| Grace period | 0–182.62 days, same for both strategies | 0–30 days (comparator) and 0–90 days (arm 1) |
-| Outcome | All-cause death | `outcome` as coded in the tutorial cohort (first readmission or death) |
-| Follow-up | To death or 1 year (365.24 days) | To outcome, loss to follow-up, or 180 days |
-| Deviation → artificial censoring | Arm 0: on the day of surgery (if within 6 months). Arm 1: at 182.62 days if alive and not operated | Each arm: at the window end if still followed and not started |
-| Outcome before the grace period ends, untreated | Counted in both arms | Counted in both arms |
-| Censoring weights | Arm 0: Cox model for time to surgery, weights updated at each surgery date. Arm 1: logistic model at 182.62 days | Logistic model at the window end, applied only to recent starters (last 7 days) |
-| Loss to follow-up | None (administrative only) | Assumed random (no weights), as in the tutorial |
-| Effect measure | Weighted Cox HR, arm 1 vs arm 0, robust SE | Same (the tutorial reports a 180-day risk difference) |
+**Kept fixed from the original data (paper Step 2):** covariates $X_i$ and each patient's surgery date $s_i$ ($s_i = \infty$ if not operated). **Censoring:** $C_i = 365.24$ for all patients (no loss to follow-up; Section 2.3).
 
-The diagrams show how example patients are cloned into both strategies, when each clone is artificially censored, and which part of follow-up carries a censoring weight. They are drawn with the same censoring rules as the analysis code. Shaded area: grace period (Maringe) or initiation window (SynPUF).
-
-```{r fig-prot-m}
-#| fig-cap: "Maringe: two strategies with a common 6-month grace period. In the no-surgery arm every remaining clone is up-weighted from day 0, with weights that change at each surgery date in the cohort; in the surgery arm weights apply only after 6 months."
-knitr::include_graphics(fig(targets::tar_read(fig_protocol_maringe, store = store)), error = FALSE)
-```
-
-```{r fig-prot-s}
-#| fig-cap: "SynPUF tutorial: two 'start within w days' strategies. Clones still followed at the window end without having started are censored there. After the window only recent starters (last 7 days: B in the 30-day arm, D in the 90-day arm) are up-weighted; earlier starters keep weight 1."
-knitr::include_graphics(fig(targets::tar_read(fig_protocol_synpuf, store = store)), error = FALSE)
-```
-
-## A3. Data-generating mechanism
-
-**Kept fixed from the original data (paper Step 2):** covariates $X_i$, each patient's treatment date $s_i$ ($s_i = \infty$ if never treated), and censoring time $C_i$. For Maringe $C_i = 365.24$; for SynPUF $C_i$ is the observed time for the `r sum(bs$cens_time < 180)` patients lost to follow-up before day 180, otherwise 180.
-
-**Outcome model.** Weibull proportional hazards with treatment as a time-varying exposure:
+**Outcome model.** Weibull proportional hazards with surgery as a time-varying exposure:
 
 $$h_i(t) = \lambda \rho\, t^{\rho - 1} \exp\{\gamma^\top X_i + \theta\, I(t \ge s_i)\}, \qquad \eta_i = \log\lambda + \gamma^\top X_i,$$
 
 $$H_i(t) = e^{\eta_i}\left[\min(t, s_i)^{\rho} + e^{\theta}\,\max\{0,\; t^{\rho} - s_i^{\rho}\}\right].$$
 
-It is fitted to the original data by maximum likelihood, $\ell = \sum_i \left[\delta_i \log h_i(Y_i) - H_i(Y_i)\right]$; the fitted values are in Table A3. In simulation, $\log\lambda$, $\rho$ and $\gamma$ are kept at their fitted values and $\theta$ is set to the scenario value ($\theta^*$ or 0).
+Fitted by maximum likelihood, $\ell = \sum_i \left[\delta_i \log h_i(Y_i) - H_i(Y_i)\right]$ (Table A2). In simulation, $\log\lambda$, $\rho$ and $\gamma$ are kept at their fitted values and $\theta$ is set to the scenario value ($\theta^*$ or 0). Where a censoring model is fitted, it has the same form with the indicator switched ($1 - \delta_i$ for loss to follow-up).
 
-**Simulation by inversion** (common random numbers: $U_i$ depends only on the replicate seed, not on $\theta$). With $E_i = -\log U_i$, $U_i \sim \text{Uniform}(0,1)$:
+**Simulation by inversion** (common random numbers: $U_i$ depends only on the replicate seed, not on $\theta$). With $E_i = -\log U_i$:
 
-$$T_i = \begin{cases} \left(E_i\, e^{-\eta_i}\right)^{1/\rho} & \text{if } E_i \le e^{\eta_i} s_i^{\rho} \text{ (event before treatment)},\\[4pt] \left\{ s_i^{\rho} + \left(E_i - e^{\eta_i} s_i^{\rho}\right) e^{-\eta_i - \theta} \right\}^{1/\rho} & \text{otherwise.} \end{cases}$$
+$$T_i = \begin{cases} \left(E_i\, e^{-\eta_i}\right)^{1/\rho} & \text{if } E_i \le e^{\eta_i} s_i^{\rho} \text{ (death before surgery)},\\[4pt] \left\{ s_i^{\rho} + \left(E_i - e^{\eta_i} s_i^{\rho}\right) e^{-\eta_i - \theta} \right\}^{1/\rho} & \text{otherwise.} \end{cases}$$
 
-**Observed data:** $Y_i = \min(T_i, C_i)$, $\delta_i = I(T_i \le C_i)$; treatment is observed at $s_i$ only if $s_i \le Y_i$.
+**Observed data:** $Y_i = \min(T_i, C_i)$, $\delta_i = I(T_i \le C_i)$; surgery is observed at $s_i$ only if $s_i \le Y_i$.
+
+```{r tab-dgm}
+#| tbl-cap: "Fitted Weibull model for death (hazard ratios)."
+knitr::kable(table_results_maringe$dgm[, .(Term = term, HR = hr, `95% CI` = ci)], align = "lrr")
+```
+
+```{r fig-fit}
+#| fig-cap: "Fit of the Weibull model: Kaplan–Meier estimate in the original data and the survival predicted by the model (averaged over patients, each with their observed surgery date)."
+#| out-width: "60%"
+knitr::include_graphics(fig_png("fig_model_fit"), error = FALSE)
+```
 
 ```{r code-dgm}
 #| echo: true
 #| eval: false
 #| code-fold: true
-#| code-summary: "R code: likelihood and outcome simulation (R/dgm.R)"
-#| code: !expr c(fun_src("dgm.R", "dgm_negloglik"), "", fun_src("dgm.R", "simulate_outcomes"))
+#| code-summary: "R code: Weibull fit, censoring model and simulation (R/dgm.R)"
+#| code: !expr c(fun_src("dgm.R", "fit_dgm"), "", fun_src("dgm.R", "invert_weibull_tv"), "", fun_src("dgm.R", "simulate_outcomes"))
 ```
 
-```{r tab-dgm}
-#| tbl-cap: "Table A3. Fitted outcome-generating models (log-hazard scale; shape ρ on its natural scale)."
-dg <- function(d, nm) data.table(
-  Dataset = nm, Term = c("shape ρ", "treatment θ", names(d$gamma)),
-  Estimate = f3(c(d$rho, d$theta_hat, d$gamma)),
-  SE = c("", f3(d$se[["theta"]]), f3(d$se[names(d$gamma)]))
-)
-knitr::kable(rbind(dg(dm, "Maringe"), dg(dsn, "SynPUF")), align = "llrr")
-```
+## A3. Censoring weights and outcome model
 
-## A4. Censoring and weights
+Grace period $g = 182.62$ days; $Z$ = age, sex, performance status, stage, deprivation, Charlson index, emergency presentation.
 
-Notation: $A$ = strategy arm, $C^a_i$ = artificial censoring time, $W_i(t)$ = weight of clone $i$ at time $t$, $Z_i$ = censoring-model covariates.
-
-**Maringe** (grace period $g = 182.62$ days; $Z$ = age, sex, performance status, stage, deprivation, Charlson, emergency presentation).
-
-- *Arm 0, no surgery within $g$.* Censored at surgery: $C^a_i = s_i$ if $s_i \le \min(g, Y_i)$. Cox model for time to surgery, $\lambda^c(t \mid Z) = \lambda^c_0(t)\exp(\beta^\top Z)$, with Breslow baseline. Weights are updated at every distinct surgery date:
+- *Arm 0, no surgery within $g$.* Censored at surgery: $C^a_i = s_i$ if $s_i \le \min(g, Y_i)$. Cox model for time to surgery with Breslow baseline; weights updated at every distinct surgery date:
 $$W_i(t) = \frac{1}{\hat S^c(t \mid Z_i)} = \exp\left\{\hat\Lambda^c_0\big(\min(t, g)\big)\, e^{\hat\beta^\top Z_i}\right\}.$$
-- *Arm 1, surgery within $g$.* Censored at $g$ if alive and not operated: $C^a_i = g$ if $s_i > g$ and $Y_i > g$. Logistic model among patients alive at $g$, $\pi(Z) = P(s \le g \mid Z, Y > g)$:
+- *Arm 1, surgery within $g$.* Censored at $g$ if alive and not operated. Logistic model among patients alive at $g$, $\pi(Z) = P(s \le g \mid Z, Y > g)$:
 $$W_i(t) = 1 \text{ for } t < g, \qquad W_i(t) = 1/\hat\pi(Z_i) \text{ for } t \ge g.$$
+- *Outcome model.* Weighted Cox model on the stacked clones, $\lambda(t \mid A) = \lambda_0(t)\, e^{\psi A}$, Efron ties, robust SE clustered on patient, Wald 95% CI.
 
-**SynPUF tutorial** (windows $w \in \{30, 90\}$, recent-start period $r = 7$ days; $Z$ = age, sex, renal disease).
-
-- *Each arm.* Censored at the window end if still followed and not started: $C^a_i = w$ if $Y_i > w$ and $s_i > w$.
-- *Weight model.* Logistic model on the set $R_w = \{i : C^a_i = w\} \cup \{i : Y_i > w,\; w - r \le s_i \le w\}$ (censored clones and recent starters only), $\pi_w(Z) = P(\text{uncensored} \mid Z,\, i \in R_w)$:
-$$W_i(t) = 1 \text{ for } t \le w; \qquad W_i(t) = \begin{cases} 1/\hat\pi_w(Z_i) & \text{if } w - r \le s_i \le w,\\ 1 & \text{if } s_i < w - r, \end{cases} \quad \text{for } t > w.$$
-
-**Outcome model (both).** Weighted Cox model on the stacked clones in counting-process form, strategy only:
-$$\lambda(t \mid A) = \lambda_0(t)\, e^{\psi A},$$
-Efron ties; robust SE clustered on patient; Wald 95% CI. $A = 1$: surgery within 6 months (Maringe), start within 90 days (SynPUF).
-
-```{r code-maringe}
+```{r code-ccw}
 #| echo: true
 #| eval: false
 #| code-fold: true
-#| code-summary: "R code: Maringe cloning and weights (R/pipeline.R)"
-#| code: !expr c(fun_src("pipeline.R", "build_clones"), "", fun_src("pipeline.R", "weight_control"), "", fun_src("pipeline.R", "weight_surgery"))
+#| code-summary: "R code: cloning, weights and outcome model (R/pipeline.R)"
+#| code: !expr c(fun_src("pipeline.R", "build_clones"), "", fun_src("pipeline.R", "weight_control"), "", fun_src("pipeline.R", "weight_surgery"), "", fun_src("pipeline.R", "fit_outcome"))
 ```
 
-```{r code-synpuf}
-#| echo: true
-#| eval: false
-#| code-fold: true
-#| code-summary: "R code: SynPUF tutorial cloning and weights (R/pipeline.R)"
-#| code: !expr fun_src("pipeline.R", "ccw_window_arm")
-```
+## A4. True value, calibration, performance and adjustment
 
-```{r code-outcome}
-#| echo: true
-#| eval: false
-#| code-fold: true
-#| code-summary: "R code: weighted Cox outcome model (R/pipeline.R)"
-#| code: !expr fun_src("pipeline.R", "fit_outcome")
-```
-
-## A5. True value, calibration and performance measures
-
-- **Truth:** $\psi(\theta) = \operatorname{plim}_{n \to \infty} \hat\psi_n$ under the outcome-generating model with parameter $\theta$. It is computed as $\tilde\psi(\theta) = \frac{1}{R}\sum_{r=1}^{R} \hat\psi^{(r)}_N$, with $N \approx 50{,}000$ (copies of the base data) and $R = `r cfg$truth$n_rep`$; robust SE not needed.
+- **Truth:** $\tilde\psi(\theta) = \frac{1}{R}\sum_{r=1}^{R} \hat\psi^{(r)}_N$, with $N = `r n0(ceiling(cfg$truth$n_target / nrow(bd)) * nrow(bd))`$ and $R = `r cfg$truth$n_rep`$.
 - **Calibration:** $\theta^*$ solves $\tilde\psi(\theta) = \hat\psi_{\text{obs}}$ (secant search from $\hat\theta$, `r cfg$calibration$n_rep` large datasets per step, tolerance `r cfg$calibration$tol`).
-- **No-effect scenario:** $\theta = 0$, so the truth is exactly $\psi = 0$; $\tilde\psi(0)$ is a diagnostic only.
-- **Performance** over $B = `r format(B, big.mark = ",")`$ replicates: bias $= \bar{\hat\psi} - \psi$; coverage $= B^{-1}\sum_b I(|\hat\psi_b - \psi| \le 1.96\,\widehat{SE}_b)$; type I error $= B^{-1}\sum_b I(|\hat\psi_b| > 1.96\,\widehat{SE}_b)$ at $\theta = 0$. The MCSE of the bias includes the truth's MC error.
+- **Performance** over $B = `r n0(B)`$ replicates: bias $= \bar{\hat\psi} - \psi$; coverage $= B^{-1}\sum_b I(|\hat\psi_b - \psi| \le 1.96\,\widehat{SE}_b)$; rejection rate $= B^{-1}\sum_b I(|\hat\psi_b| > 1.96\,\widehat{SE}_b)$. The MCSE of the bias includes the truth's MC error.
+- **Adjustment:** $\hat\psi^{adj} = \hat\psi - \widehat{\text{bias}}$; CI $\hat\psi^{adj} \pm 1.96\, k\, \widehat{SE}$ with $k = \max(1, SE_{emp}/SE_{mod})$; critical value $z^*$ = 95th percentile of $|z|$ under $\theta = 0$. Two-fold cross-fitting over replicate index for the adjusted performance.
 
 ```{r code-truth}
 #| echo: true
@@ -345,12 +321,9 @@ Efron ties; robust SE clustered on patient; Wald 95% CI. $A = 1$: surgery within
 #| code: !expr c(fun_src("truth.R", "compute_truth"), "", fun_src("truth.R", "calibrate_theta"))
 ```
 
-## A6. Settings
+## A5. Settings and software
 
-Common random numbers across scenarios. SynPUF follow-up truncated at 180 days. Full design: `protocol/ADEMP.md`; all settings: `config/config.yml`.
-
-## A7. Software
-
+Common random numbers across scenarios; seeds and all settings in `config/config.yml`; design in `protocol/ADEMP.md`; pipeline structure in `docs/technical_setup.html`. Run time `r f2(mins_all)` minutes on 1 core.
 
 ```{r session}
 #| results: asis

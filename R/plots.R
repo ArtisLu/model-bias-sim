@@ -188,6 +188,8 @@ plot_protocol <- function(name, spec, horizon) {
     ) +
     ggplot2::scale_x_continuous(limits = c(0, horizon * 1.02), expand = c(0, 0)) +
     ggplot2::labs(x = "Days since time zero", y = NULL) +
+    # Two rows so the symbol legend fits the figure width
+    ggplot2::guides(shape = ggplot2::guide_legend(nrow = 2)) +
     theme_qba() +
     ggplot2::theme(
       text = ggplot2::element_text(size = 13), axis.text = ggplot2::element_text(size = 11),

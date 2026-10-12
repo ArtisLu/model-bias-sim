@@ -1,6 +1,7 @@
 # Modelling-bias QBA simulation: all tunables live here (simulation_setup.md, Sec. 2).
 # Profiles: default = Maringe-only production run (paper); smoke = quick end-to-end check;
 # two_datasets = Maringe + SynPUF comparison (R_CONFIG_ACTIVE=two_datasets).
+# Do not add keys lightly: every target depends on the config object.
 
 default:
   # Datasets run by the pipeline; SynPUF stays defined (and tested) but is not run
@@ -78,4 +79,3 @@ smoke:
 
 two_datasets:
   active_datasets: ["maringe", "synpuf"]
-  render_report: true   # Quarto colleague report (needs the Quarto CLI)
