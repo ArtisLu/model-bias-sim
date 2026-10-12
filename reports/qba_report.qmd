@@ -134,6 +134,43 @@ knitr::kable(tb[, -"indent"], align = "lrrrrr", escape = FALSE)
 knitr::include_graphics(fig(targets::tar_read(fig_protocol_maringe, store = store)), error = FALSE)
 ```
 
+## 1.2 Run time
+
+```{r tab-runtime}
+#| tbl-cap: "Run time of the full pipeline by stage (sequential, 1 core)."
+mt <- data.table(meta)
+mt[, stage := fcase(
+  grepl("^calibration_maringe$", name), "Calibration of θ* (paper Step 3)",
+  grepl("^truth_maringe_", name), "True values ψ(θ*) and ψ(0)",
+  grepl("^sim_results_maringe_", name), "Simulated studies (paper Steps 3–5)",
+  default = "Data, model fits, summaries, tables, figures, report"
+)]
+n_large_cal <- nrow(cal$path) * cfg$calibration$n_rep
+units <- c(
+  "Calibration of θ* (paper Step 3)" = n_large_cal,
+  "True values ψ(θ*) and ψ(0)" = 2 * cfg$truth$n_rep,
+  "Simulated studies (paper Steps 3–5)" = 2 * B
+)
+unit_lab <- c(
+  "Calibration of θ* (paper Step 3)" = "large datasets of 50,000",
+  "True values ψ(θ*) and ψ(0)" = "large datasets of 50,000",
+  "Simulated studies (paper Steps 3–5)" = "CCW analyses of 200 patients"
+)
+rt <- mt[, .(seconds = sum(seconds, na.rm = TRUE)), by = stage]
+rt[, `:=`(n = units[stage], what = unit_lab[stage])]
+rt <- rt[order(-seconds)]
+tot <- sum(rt$seconds)
+knitr::kable(rt[, .(
+  Stage = stage,
+  Minutes = formatC(seconds / 60, format = "f", digits = 1),
+  `Share` = pct(seconds / tot, 0),
+  Units = fifelse(is.na(n), "", paste(n0(n), what)),
+  `Seconds per unit` = fifelse(is.na(n), "", formatC(seconds / n, format = "f", digits = 3))
+)], align = "lrrlr")
+```
+
+Total `r formatC(tot / 60, format = "f", digits = 1)` minutes on one core of a cloud virtual machine (`r session$platform$version`), run sequentially because `crew` was not installed. With `crew` and several workers, the `r n0(2 * B / cfg$batch_size)` batches of simulated studies run in parallel and the two true values run side by side, while the calibration search stays sequential (each step needs the previous one); with 4 workers the run would take roughly `r formatC((rt[grepl("^Simulated", stage), seconds] / 4 + rt[grepl("^True", stage), seconds] / 2 + rt[grepl("^Calibration", stage), seconds] + rt[grepl("^Data", stage), seconds]) / 60, format = "f", digits = 0)` minutes. One CCW analysis of the 200 patients takes about `r formatC(1000 * rt[grepl("^Simulated", stage), seconds] / (2 * B), format = "f", digits = 0)` ms; the large datasets that define the true value take `r pct(sum(rt[grepl("^(Calibration|True)", stage), seconds]) / tot, 0)` of the run time.
+
 # 2. How the simulation works {#methods}
 
 ## 2.1 Simulate patients, not the CCW
@@ -223,7 +260,7 @@ knitr::kable(table_results_maringe$performance,
 | Section 4.3: "θ = −0.70, which results in HR~CCW~ = 0.48" | θ\* = `r f2(cal$theta_star)` is confirmed; HR~CCW~ = `r hr(po$truth)` (= observed), exp(θ\*) = `r hr(cal$theta_star)`. |
 | Discussion: "small but detectable bias … type I error rate (7.1%) and 95% CI coverage (93.7%)" | Bias confirmed (`r f3(po$bias)`); coverage **`r pct(po$coverage)`**; type I error **`r pct(pn$reject_0)`**, not 7.1%. |
 | Discussion: "QBA-based adjustments successfully restored unbiasedness, the nominal type I error rate, and nominal 95% CI coverage" | **Confirmed** by cross-fitting: coverage `r pct(adj("95% CI coverage")$value)`, type I error `r pct(adj("Type I error")$value)`. |
-| Section 4.4 placeholder: "Report also running time on how many cores" | `r f2(mins_all)` minutes on 1 core for the full pipeline (`r n0(2 * B)` replays, calibration and truths). |
+| Section 4 placeholder: "Report also running time on how many cores" | `r f2(mins_all)` minutes on 1 core for the full pipeline (Section 1.2). |
 | ISPE 2026 remark (Wang, Zivich et al.): CCW may have low CI coverage | **Supported:** `r pct(po$coverage)`. |
 
 # 6. Caveats and next steps
@@ -323,7 +360,7 @@ $$W_i(t) = 1 \text{ for } t < g, \qquad W_i(t) = 1/\hat\pi(Z_i) \text{ for } t \
 
 ## A5. Settings and software
 
-Common random numbers across scenarios; seeds and all settings in `config/config.yml`; design in `protocol/ADEMP.md`; pipeline structure in `docs/technical_setup.html`. Run time `r f2(mins_all)` minutes on 1 core.
+Common random numbers across scenarios; seeds and all settings in `config/config.yml`; design in `protocol/ADEMP.md`; pipeline structure in `docs/technical_setup.html`. Run time: Section 1.2.
 
 ```{r session}
 #| results: asis

@@ -44,8 +44,6 @@ meta <- meta[meta$type %in% c("stem", "branch"), ]
 secs_sim <- sum(meta[grepl(paste0("^sim_results_", ds, "_"), meta$name), ]$seconds, na.rm = TRUE)
 secs_all <- sum(meta$seconds, na.rm = TRUE)
 cores <- if (cfg$workers > 1 && requireNamespace("crew", quietly = TRUE)) cfg$workers else 1
-cpu <- tryCatch(trimws(sub(".*: ", "", grep("model name", readLines("/proc/cpuinfo"), value = TRUE)[1])),
-                error = function(e) "unknown CPU")
 r_ver <- paste(R.version$major, R.version$minor, sep = ".")
 n_surg_day1 <- sum(bd$trt_time <= 1)
 
@@ -242,7 +240,7 @@ doc <- txt(doc, paste0(
 doc <- txt(doc, paste0(
   "Software and run time. The simulation was programmed in R ", r_ver, " (packages survival, data.table ",
   "and targets) and is available in the Online Supplement. The full run took ", f1(secs_all / 60),
-  " minutes on ", cores, " core", if (cores > 1) "s" else "", " (", cpu, "), of which ", f1(secs_sim / 60),
+  " minutes on ", cores, " core", if (cores > 1) "s" else "", " of a cloud virtual machine, of which ", f1(secs_sim / 60),
   " minutes were the 2 × ", n0(B), " replicates (", f2(secs_sim / (2 * B)), " seconds per replicate)."
 ))
 
