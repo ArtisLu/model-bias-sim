@@ -19,7 +19,8 @@ out_dir <- if (profile == "default") "reports" else file.path("reports", profile
 # Report on the Maringe case study (into out_dir): not in smoke runs, and only if Quarto is installed.
 # Kept out of cfg on purpose: every target depends on cfg, so a new key would rerun everything.
 do_report <- "maringe" %in% active && profile != "smoke" &&
-  nzchar(Sys.which("quarto"))
+  requireNamespace("quarto", quietly = TRUE) &&
+  isTRUE(tryCatch(nzchar(quarto::quarto_path()), error = function(e) FALSE))
 # Parallel workers need crew; without it the pipeline runs sequentially. QBA_WORKERS overrides
 # cfg$workers without editing the config (every target depends on cfg, so editing it reruns all).
 n_workers <- as.integer(Sys.getenv("QBA_WORKERS", cfg$workers))
