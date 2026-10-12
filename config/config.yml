@@ -1,0 +1,59 @@
+# Modelling-bias QBA simulation: all tunables live here (simulation_setup.md, Sec. 2).
+# Profiles: default = demo run; smoke = quick end-to-end check (R_CONFIG_ACTIVE=smoke).
+
+default:
+  seed_master: 20261002
+  seed_truth: 20261003
+  workers: 2
+  B: 5000            # replicates per scenario; coverage MCSE ~0.3%, bias MCSE ~0.004 (ADEMP P)
+  batch_size: 250
+
+  # Large-sample truth: pipeline limit on stacked copies of the base data (~50,000 patients)
+  truth:
+    n_target: 50000    # patients per large dataset (~1.5 GB per worker)
+    n_rep: 24          # independent large datasets averaged at theta* and 0
+  # Search for theta* such that the CCW truth equals the observed estimate (paper Step 3)
+  calibration:
+    n_rep: 12          # truths during the search (common random numbers)
+    max_iter: 4
+    tol: 0.005         # log-HR
+    bound: 3           # |theta| cap
+
+  datasets:
+    maringe:
+      label: "Maringe lung cancer (n = 200)"
+      file: "data/raw/lungcancer.csv"
+      contrast: "Surgery within 6 months vs no surgery within 6 months"
+      pipeline:
+        design: "grace_vs_none"
+        grace: 182.62            # days
+        cens_covariates: ["age_c", "sex", "perf", "stage", "deprivation", "charlson", "emergency"]
+        conf_level: 0.95
+      dgm:
+        covariates: ["age_c", "sex", "perf", "stage", "deprivation", "charlson", "emergency"]
+    synpuf:
+      label: "SynPUF MI cohort (n = 1,590)"
+      file: "data/raw/synpuf_baseccwcohort.sas7bdat"
+      contrast: "Treatment start within 90 days vs within 30 days of MI discharge"
+      horizon: 180               # days; tutorial follow-up window
+      pipeline:
+        design: "window_vs_window"
+        windows: [30, 90]        # reference window first
+        recent_days: 7           # tutorial: only starters in the last 7 days are up-weighted
+        cens_covariates: ["age_c", "sex", "renal"]
+        conf_level: 0.95
+      dgm:
+        covariates: ["age_c", "sex", "renal", "nonwhite"]
+
+smoke:
+  workers: 1
+  B: 20
+  batch_size: 10
+  truth:
+    n_target: 2000
+    n_rep: 2
+  calibration:
+    n_rep: 1
+    max_iter: 2
+    tol: 0.05
+    bound: 3
