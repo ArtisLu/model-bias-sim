@@ -1,6 +1,7 @@
 # Load and prepare the base datasets into one common patient-level format:
 # covariates, planned treatment time `s` (Inf if none), follow-up `time`, `status`,
-# censoring time `cens_time` (kept fixed in simulation) and observed `trt_time`.
+# observed censoring time `cens_time`, administrative end `admin_time`, loss-to-follow-up
+# indicator `cens_event` (outcome of the censoring model) and observed `trt_time`.
 
 #' Prepare a base dataset
 #' @param file Path to the raw file (read-only source).
@@ -34,7 +35,9 @@ prepare_maringe <- function(file) {
     s = data.table::fifelse(is.na(timetosurgery), Inf, as.numeric(timetosurgery)),
     time = as.numeric(fup_obs),
     status = as.integer(death),
-    cens_time = 365.24
+    cens_time = 365.24,
+    admin_time = 365.24,
+    cens_event = 0L
   )]
 }
 
@@ -53,7 +56,9 @@ prepare_synpuf <- function(file, horizon) {
     s = data.table::fifelse(is.na(RX_start), Inf, as.numeric(RX_start)),
     time = pmin(followup, horizon),
     status = as.integer(outcome == 1 & followup <= horizon),
-    # Early loss to follow-up is kept as observed; everyone else is followed to the horizon
-    cens_time = data.table::fifelse(outcome == 0 & followup < horizon, followup, horizon)
+    # Observed censoring: early loss to follow-up, otherwise the horizon
+    cens_time = data.table::fifelse(outcome == 0 & followup < horizon, followup, horizon),
+    admin_time = horizon,
+    cens_event = as.integer(outcome == 0 & followup < horizon)
   )]
 }

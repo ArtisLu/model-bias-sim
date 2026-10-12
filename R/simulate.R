@@ -12,12 +12,13 @@ run_batch <- function(data, dgm, theta, seeds, batch_id, pipeline, batch_size) {
   reps <- reps[reps <= length(seeds)]
   out <- lapply(reps, function(b) {
     # Draws depend on the replicate index only, so replicate b is identical in both scenarios
-    u <- draw_replicate_rng(seeds[b], nrow(data))$u_event
-    sim <- simulate_outcomes(data, dgm, theta, u)
+    rng <- draw_replicate_rng(seeds[b], nrow(data))
+    sim <- simulate_outcomes(data, dgm, theta, rng$u_event, rng$u_cens)
     res <- safely_run(run_pipeline, sim, pipeline)
     res[, `:=`(
       theta = theta, rep = b, seed = seeds[b],
-      n_outcomes = sum(sim$status), n_treated = sum(is.finite(sim$trt_time))
+      n_outcomes = sum(sim$status), n_treated = sum(is.finite(sim$trt_time)),
+      n_lost = sum(sim$status == 0L & sim$time < sim$admin_time)
     )]
   })
   data.table::rbindlist(out)

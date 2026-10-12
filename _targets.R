@@ -1,22 +1,26 @@
-# _targets.R - modelling-bias QBA simulation (CCW): two base datasets, observed-effect
-# and no-effect scenarios. Run with targets::tar_make(); smoke run:
-# Sys.setenv(R_CONFIG_ACTIVE = "smoke").
+# _targets.R - modelling-bias QBA simulation (CCW): observed-effect and no-effect scenarios
+# for the datasets in cfg$active_datasets (default: SynPUF only). Run with targets::tar_make();
+# smoke run: Sys.setenv(R_CONFIG_ACTIVE = "smoke"); original two-dataset comparison:
+# Sys.setenv(R_CONFIG_ACTIVE = "two_datasets").
 library(targets)
 library(tarchetypes)
 
 tar_source("R")
 cfg <- config::get(file = "config/config.yml")
-ds_labels <- vapply(cfg$datasets, `[[`, character(1), "label")
+active <- unlist(cfg$active_datasets)
+ds_labels <- vapply(cfg$datasets[active], `[[`, character(1), "label")
+# Parallel workers need crew; without it the pipeline runs sequentially
+use_crew <- cfg$workers > 1 && requireNamespace("crew", quietly = TRUE)
 
 tar_option_set(
   packages = c("data.table", "survival", "checkmate"),
   seed = cfg$seed_master,
-  controller = if (cfg$workers > 1) crew::crew_controller_local(workers = cfg$workers) else NULL
+  controller = if (use_crew) crew::crew_controller_local(workers = cfg$workers) else NULL
 )
 
 # One target chain per dataset (static branching)
 per_dataset <- tar_map(
-  values = list(ds = names(cfg$datasets)),
+  values = list(ds = active),
   names = "ds",
 
   # Data and observed analysis (paper Step 1)
@@ -25,7 +29,7 @@ per_dataset <- tar_map(
   tar_target(obs_result, run_pipeline(base_data, cfg$datasets[[ds]]$pipeline)),
 
   # Simulated world: reference DGM, calibration of theta* (paper Step 3), true values
-  tar_target(dgm, fit_dgm(base_data, cfg$datasets[[ds]][["dgm"]])),
+  tar_target(dgm, fit_dgm(base_data, cfg$datasets[[ds]][["dgm"]], cfg$datasets[[ds]]$censoring)),
   tar_target(calibration, calibrate_theta(dgm, base_data, obs_result, cfg$datasets[[ds]]$pipeline, cfg)),
   tar_target(theta_sim, c(calibration$theta_star, 0)),
   tar_target(
@@ -71,16 +75,42 @@ list(
   # Outputs
   tar_target(fig_estimates, save_plot(plot_estimates(sim_all, performance_all, ds_labels),
                                       "reports/fig_estimates.png", height = 5.5), format = "file"),
-  tar_target(fig_comparison, save_plot(plot_comparison(performance_all, ds_labels),
-                                       "reports/fig_comparison.png", height = 5.5), format = "file"),
-  tar_target(fig_protocol_maringe, save_plot(
-    plot_protocol("maringe", cfg$datasets$maringe$pipeline, 365.24),
-    "reports/fig_protocol_maringe.png", width = 8.5, height = 4.6
-  ), format = "file"),
-  tar_target(fig_protocol_synpuf, save_plot(
-    plot_protocol("synpuf", cfg$datasets$synpuf$pipeline, cfg$datasets$synpuf$horizon),
-    "reports/fig_protocol_synpuf.png", width = 8.5, height = 5
-  ), format = "file"),
+  if ("synpuf" %in% active) {
+    tar_target(fig_protocol_synpuf, save_plot(
+      plot_protocol("synpuf", cfg$datasets$synpuf$pipeline, cfg$datasets$synpuf$horizon),
+      "reports/fig_protocol_synpuf.png", width = 8.5, height = 5
+    ), format = "file")
+  },
   tar_target(session, sessioninfo::session_info()),
-  tar_quarto(report, "reports/qba_report.qmd", quiet = FALSE)
+
+  # Publication outputs for the SynPUF case study (paper Section 4)
+  if ("synpuf" %in% active) {
+    list(
+      tar_target(raw_synpuf, haven::read_sas(base_file_synpuf)),
+      tar_target(table_baseline, make_baseline_table(raw_synpuf, cfg$datasets$synpuf)),
+      tar_target(perf_adjusted, evaluate_adjustment(sim_results_synpuf, truth_table_synpuf)),
+      tar_target(table_results, make_results_table(
+        obs_result_synpuf, dgm_synpuf, calibration_synpuf, truth_table_synpuf,
+        performance_synpuf, correction_synpuf, perf_adjusted
+      )),
+      tar_target(paper_figures, save_paper_figures(
+        performance_synpuf, perf_adjusted, sim_results_synpuf, base_data_synpuf, dgm_synpuf,
+        "reports/paper", correction_synpuf$z_crit_calibrated
+      ), format = "file")
+    )
+  },
+
+  # Two-dataset comparison and colleague report (two_datasets profile only)
+  if (length(active) > 1) {
+    list(
+      tar_target(fig_comparison, save_plot(plot_comparison(performance_all, ds_labels),
+                                           "reports/fig_comparison.png", height = 5.5),
+                 format = "file"),
+      tar_target(fig_protocol_maringe, save_plot(
+        plot_protocol("maringe", cfg$datasets$maringe$pipeline, 365.24),
+        "reports/fig_protocol_maringe.png", width = 8.5, height = 4.6
+      ), format = "file"),
+      tar_quarto(report, "reports/qba_report.qmd", quiet = FALSE)
+    )
+  }
 )

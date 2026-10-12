@@ -17,13 +17,14 @@ make_crn_seeds <- function(seed_master, B) {
 #' All random draws for one replicate, in a fixed order
 #' @param seed Replicate seed.
 #' @param n Number of patients.
-#' @return List with `u_event` (uniforms for event-time inversion) and `seed_aux`.
+#' @return List with `u_event` (event-time inversion), `seed_aux`, `u_cens` (censoring times).
 draw_replicate_rng <- function(seed, n) {
   withr::with_seed(seed, .rng_kind = "L'Ecuyer-CMRG", {
     list(
       u_event = runif(n),
       # Reserved for later components (MI, bootstrap); appended, never reordered
-      seed_aux = sample.int(.Machine$integer.max, 1)
+      seed_aux = sample.int(.Machine$integer.max, 1),
+      u_cens = runif(n)
     )
   })
 }

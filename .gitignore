@@ -4,3 +4,6 @@ _targets/
 .Rproj.user/
 renv/library/
 reports/qba_report_files/
+*.Rproj
+.DS_Store
+reports/paper/*_files/

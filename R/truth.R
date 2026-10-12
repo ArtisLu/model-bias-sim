@@ -21,8 +21,9 @@ compute_truth <- function(dgm, data, theta, pipeline, cfg, n_rep = cfg$truth$n_r
   # Same seeds at every theta (CRN), so psi(theta) is smooth for calibration
   seeds <- make_crn_seeds(cfg$seed_truth, n_rep)
   est <- vapply(seeds, function(sd) {
-    u <- draw_replicate_rng(sd, nrow(big))$u_event
-    run_pipeline(simulate_outcomes(big, dgm, theta, u), pipeline, robust = FALSE)$estimate
+    rng <- draw_replicate_rng(sd, nrow(big))
+    sim <- simulate_outcomes(big, dgm, theta, rng$u_event, rng$u_cens)
+    run_pipeline(sim, pipeline, robust = FALSE)$estimate
   }, numeric(1))
   data.table::data.table(
     theta = theta,

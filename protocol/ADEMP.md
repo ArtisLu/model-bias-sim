@@ -1,12 +1,13 @@
-# ADEMP protocol — modelling-bias QBA, CCW case studies (v0.2)
+# ADEMP protocol — modelling-bias QBA, CCW case study (v0.3)
 
-**Owner:** Artis Luguzis · **Date:** 5 Oct 2026 · **Status:** demo run; to be confirmed with Gerd before the production run.
+**Owner:** Artis Luguzis · **Date:** 12 Oct 2026 · **Status:** paper run (SynPUF only). v0.2 (Maringe + SynPUF) is frozen on branch `archive/two-datasets`; the Maringe columns below are kept for reference.
 
 ## A — Aims
 
-1. Apply the draft paper's modelling-bias QBA to the published CCW analysis of two public datasets.
-2. Per dataset: does the CCW analysis show bias in the log-HR, under-coverage of its 95% CI, or inflated type I error, when the true effect equals the observed estimate?
-3. Compare the two datasets, and show the correction step (paper Section 2.7).
+1. Apply the draft paper's modelling-bias QBA to the published CCW analysis of the SynPUF MI cohort (Webster-Clark et al. 2025).
+2. Does the CCW analysis show bias in the log-HR, under-coverage of its 95% CI, or inflated type I error, when the true effect equals the observed estimate?
+3. Show the adjustment step (paper Section 2.7) and check that the adjusted analysis restores nominal performance.
+4. (v0.2 only) Compare with the Maringe lung cancer example.
 
 ## Base data
 
@@ -16,15 +17,16 @@
 | n / events | 200 / 48 deaths within 1 year | 1,590 / 578 readmissions or deaths within 180 days |
 | Treatment | Surgery (106 within 6 months; 42 on day 1) | Treatment start after MI discharge (`RX_start`) |
 | Covariates | age, sex, performance status, stage, deprivation, Charlson, emergency | age, sex, end-stage renal disease, race (DGM only) |
-| Censoring | Administrative at 365.24 days | Truncated at 180 days; early loss to follow-up (31 patients) kept |
+| Censoring | Administrative at 365.24 days | Administrative at 180 days; loss to follow-up before day 180 in 30 patients |
 
 Maringe: classic CCW teaching example, already cited in the draft; small sample. SynPUF: the tutorial cohort ships with the repository, so no cohort build from CMS files is needed; larger sample and a different CCW design.
 
 ## D — Data-generating mechanism (per dataset)
 
-- **Kept fixed (paper Step 2):** all covariates, each patient's observed treatment date `s` (treatment plan; `s = ∞` if none), and each patient's censoring time.
+- **Kept fixed (paper Step 2):** all covariates and each patient's observed treatment date `s` (treatment plan; `s = ∞` if none).
 - **Simulated (Step 3):** event time from a Weibull proportional-hazards model fitted to the original data, with treatment as a **time-varying** exposure: h(t) = λρt^(ρ−1) exp(γ'X + θ·1{t ≥ s}). Treatment is observed only if `s` ≤ event/censoring time.
-- Event times by inversion of the cumulative hazard; common random numbers (replicate *b* uses the same uniforms in both scenarios).
+- **Censoring (paper Section 2.3; v0.3):** loss to follow-up is simulated from a second Weibull PH model fitted with the event/censoring indicator switched (loss to follow-up = event; outcome events and the 180-day horizon = censored), with the same covariates and treatment as a time-varying term, so censoring after treatment start has its own hazard. Censoring time = min(simulated loss time, 180 days). Maringe has administrative censoring only (`censoring: none`). `censoring: fixed` reproduces v0.2 (observed censoring times kept).
+- Event and censoring times by inversion of the cumulative hazards; common random numbers (replicate *b* uses the same uniforms in both scenarios; censoring uniforms are drawn after the event uniforms, so event draws are unchanged from v0.2).
 - **Scenarios:** θ\* (calibrated so the true CCW effect equals the observed estimate) and θ = 0 (no effect, type I error).
 
 *Why time-varying:* the treatment effect can only start once treatment happens; a DGM with a strategy effect from day 0 would violate "no anticipation".
@@ -48,13 +50,14 @@ Maringe: classic CCW teaching example, already cited in the draft; small sample.
 
 ## P — Performance measures
 
-Per dataset and scenario: bias ± MCSE (including the truth's MC error), empirical SE, model SE and relative error, RMSE, 95% CI coverage, rejection rate of H0: HR = 1 (and its direction), failures/warnings. **B = 5,000** replicates per scenario (bias MCSE ≈ 0.004, coverage MCSE ≈ 0.3%). Failures are recorded and excluded; their count is reported. Production target: 10,000.
+Per scenario: bias ± MCSE (including the truth's MC error), empirical SE, model SE and relative error, RMSE, 95% CI coverage, rejection rate of H0: HR = 1 (power in the observed-effect scenario, type I error in the null scenario, and its direction), failures/warnings. **B = 10,000** replicates per scenario (bias MCSE ≈ 0.002, coverage MCSE ≈ 0.2%). Failures are recorded and excluded; their count is reported.
 
 ## Correction (paper Step 7)
 
 - Bias: corrected estimate = observed − bias (the paper's grid search to first order).
 - CI: widened by empirical SE / model SE in the observed-effect scenario (when > 1).
 - Type I error: p-value = share of null-scenario replicates with |z| ≥ observed |z|; calibrated critical value = 95th percentile of null |z|.
+- **Performance of the adjusted analysis (v0.3):** two-fold cross-fitting over replicates (odd/even replicate index): bias, CI inflation and critical value are estimated on one half and applied to the other, in both scenarios; bias, coverage, power and type I error of the adjusted analysis are then averaged over both halves.
 
 ## Change log
 
@@ -64,3 +67,4 @@ Per dataset and scenario: bias ± MCSE (including the truth's MC error), empiric
 | 2026-10-02 | Control-arm censoring model: weekly pooled logistic → Cox (Maringe) | Weekly discretisation left within-week informative censoring uncorrected |
 | 2026-10-02 | Added null-specific measures (coverage of 0, direction of rejections) | Clarify type I error definition |
 | 2026-10-05 | v0.2: added SynPUF dataset; θ grid replaced by observed-effect + null scenarios; secant calibration; truth with 24 large datasets; correction = observed − bias | Focus on the observed effect; compare datasets |
+| 2026-10-12 | v0.3: SynPUF only (Maringe kept in code, `two_datasets` profile); loss to follow-up simulated from a Weibull censoring model (switched indicator, time-varying treatment); B = 10,000; cross-fitted performance of the adjusted analysis; paper tables/figures | Paper uses one dataset (agreed with Gerd); paper Section 2.3 and Gerd's request to model censoring after treatment start |
