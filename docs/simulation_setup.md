@@ -5,7 +5,7 @@
 **Version:** 1.0 (2 Oct 2026)
 **Purpose of this document:** the standing reference for *how* the simulation is built, run and reported. The *content* of the simulation (aims, DGM, estimand, pipeline, grid) lives in the ADEMP protocol (`protocol/ADEMP.md`). Any R code written for this project must follow this document unless the protocol says otherwise.
 
-> **Current scope (per Gerd, Sep 2026):** one base dataset (a public CCW dataset), one analysis pipeline (CCW), one scenario. Truth = the treatment parameter of the CCW model. The set-up below is generic so that further pipelines or scenarios can be added as rows in the scenario table, without changing the code structure.
+> **Current scope (Sep 2026):** one base dataset (a public CCW dataset), one analysis pipeline (CCW), one scenario. Truth = the treatment parameter of the CCW model. The set-up below is generic so that further pipelines or scenarios can be added as rows in the scenario table, without changing the code structure.
 
 ---
 

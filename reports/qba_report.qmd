@@ -164,7 +164,7 @@ Result: θ\* = `r f3(cal$theta_star)` (Weibull HR `r hr(cal$theta_star)`), again
 
 ## 2.3 Censoring (paper Section 2.3) {#censoring}
 
-The paper says that for time-to-event data the censoring distribution is also predicted, by switching the event/censoring indicator and modelling censoring dependent on covariates, and that the final times are the minimum of event and censoring times. Gerd asked that the censoring mechanism after treatment start be modelled this way.
+The paper says that for time-to-event data the censoring distribution is also predicted, by switching the event/censoring indicator and modelling censoring dependent on covariates, and that the final times are the minimum of event and censoring times. This includes censoring after treatment start.
 
 **How the code does it.** `fit_dgm()` fits a second Weibull model with the indicator switched: loss to follow-up is the event, deaths and the end of follow-up are censored. It uses the same covariates and surgery as a time-varying term, so censoring after treatment start has its own hazard. `simulate_outcomes()` draws a censoring time for each patient by the same inversion as the event time, from its own random numbers, and sets follow-up to min(event, censoring, end of study). This is controlled by `censoring: model` in `config/config.yml` and covered by unit tests.
 
