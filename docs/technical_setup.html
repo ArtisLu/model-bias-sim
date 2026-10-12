@@ -291,7 +291,7 @@ ul.points li, ol.points li { margin: 6px 0; }
       <tr><td><code>batch_size</code></td><td>250</td><td>10</td><td>250</td><td>Replicates per branch; results do not depend on it</td></tr>
       <tr><td><code>truth: n_target, n_rep</code></td><td>50,000; 24</td><td>2,000; 2</td><td>50,000; 24</td><td>Size and number of the large datasets that define ψ(θ)</td></tr>
       <tr><td><code>calibration</code></td><td>12 reps, 4 steps, tol 0.005</td><td>1 rep, 2 steps</td><td>as default</td><td>Secant search for θ*</td></tr>
-      <tr><td><code>workers</code></td><td>2</td><td>1</td><td>2</td><td>Parallel workers (crew); sequential if crew is not installed</td></tr>
+      <tr><td><code>workers</code></td><td>2</td><td>1</td><td>2</td><td>Parallel workers (crew); sequential if crew is not installed. Override without editing the config: <code>Sys.setenv(QBA_WORKERS = 8)</code></td></tr>
       <tr><td><code>datasets$maringe$pipeline</code></td><td colspan="3">grace period 182.62 days; censoring models on age, sex, performance status, stage, deprivation, Charlson, emergency</td><td>CCW design of Maringe et al.</td></tr>
       <tr><td><code>datasets$maringe$censoring</code></td><td colspan="3">model: none (administrative censoring at 365.24 days only)</td><td>SynPUF uses <code>weibull</code>; <code>fixed</code> keeps observed censoring times</td></tr>
       <tr><td><code>render_report</code></td><td>–</td><td>–</td><td>true</td><td>Render the Quarto colleague report (needs the Quarto CLI)</td></tr>
@@ -305,7 +305,7 @@ ul.points li, ol.points li { margin: 6px 0; }
     <li><code>make_crn_seeds(seed_master, B)</code> draws one seed per replicate index b, once. Replicate b gets the same seed in both scenarios (common random numbers), so the θ* and null scenarios differ only in θ.</li>
     <li><code>draw_replicate_rng(seed)</code> makes all draws for one replicate in a fixed order: event uniforms, an auxiliary seed, then censoring uniforms. New components are appended at the end, so adding the censoring model left the event-time draws of v0.2 unchanged.</li>
     <li>The truth uses its own seed (<code>seed_truth</code>) with the same 24 seeds at every θ.</li>
-    <li>Results are identical whatever the batch size or number of workers (tested in <code>test-pipeline.R</code>).</li>
+    <li>Results are identical whatever the batch size (tested in <code>test-pipeline.R</code>) or the number of workers (checked by rerunning the full pipeline with 2 workers).</li>
     <li>Each replicate's estimate, SE, status and error or warning message is stored in <code>sim_results</code>; failed fits are counted and excluded from the measures.</li>
   </ul>
 </section>
@@ -339,7 +339,8 @@ targets::tar_meta(fields = c(name, seconds))   # run time per target</code></pre
 <section class="col" id="open">
   <h2>Open points for the next iteration</h2>
   <ul class="points">
-    <li>Add <code>renv.lock</code> from your machine; this run used R 4.3.3, targets 1.4.1 and tarchetypes 0.7.12 without crew (sequential, about 32 minutes).</li>
+    <li>Add <code>renv.lock</code> from your machine; this run used R 4.3.3, targets 1.4.1, tarchetypes 0.7.12, crew 0.9.3 and mirai 1.0.0 with 2 workers.</li>
+    <li>The calibration search (about 7.5 minutes) is sequential and becomes the bottleneck with many workers; its 12 large datasets per step could be run in parallel as well.</li>
     <li>Run R in a UTF-8 locale (the default on Windows with R 4.2 or later, and on macOS). Switching the locale of an existing <code>_targets/</code> store marks every target as outdated and triggers a full rerun.</li>
     <li>Move <code>build_section4.R</code> into the pipeline once the text is stable.</li>
     <li>Rewrite <code>qba_report.qmd</code> for one dataset, or retire it in favour of the paper outputs.</li>

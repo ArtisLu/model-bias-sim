@@ -62,7 +62,7 @@ B <- po$B
 n_fail <- po$n_fail + pn$n_fail
 bias_ci <- function(p) paste0(f3(p$bias - 1.96 * p$bias_mcse_total), " to ", f3(p$bias + 1.96 * p$bias_mcse_total))
 n_surv <- sum(bd$status == 0)
-meta <- targets::tar_meta(fields = c(name, type, seconds), targets_only = TRUE, store = store)
+meta <- targets::tar_meta(fields = c(name, type, time, seconds), targets_only = TRUE, store = store)
 meta <- meta[meta$type %in% c("stem", "branch"), ]
 mins_all <- sum(meta$seconds, na.rm = TRUE) / 60
 ```
@@ -159,7 +159,7 @@ Before weighting, `r sum(abs(bu$smd) > 10)` of `r nrow(bu)` covariate terms diff
 ## 1.2 Run time
 
 ```{r tab-runtime}
-#| tbl-cap: "Run time of the full pipeline by stage (sequential, 1 core)."
+#| tbl-cap: "Computing time of the full pipeline by stage (sum over targets, all workers)."
 mt <- data.table(meta)
 mt[, stage := fcase(
   grepl("^calibration_maringe$", name), "Calibration of θ* (paper Step 3)",
@@ -191,7 +191,14 @@ knitr::kable(rt[, .(
 )], align = "lrrlr")
 ```
 
-Total `r formatC(tot / 60, format = "f", digits = 1)` minutes on one core of a cloud virtual machine (`r session$platform$version`), run sequentially because `crew` was not installed. With `crew` and several workers, the `r n0(2 * B / cfg$batch_size)` batches of simulated studies run in parallel and the two true values run side by side, while the calibration search stays sequential (each step needs the previous one); with 4 workers the run would take roughly `r formatC((rt[grepl("^Simulated", stage), seconds] / 4 + rt[grepl("^True", stage), seconds] / 2 + rt[grepl("^Calibration", stage), seconds] + rt[grepl("^Data", stage), seconds]) / 60, format = "f", digits = 0)` minutes. One CCW analysis of the 200 patients takes about `r formatC(1000 * rt[grepl("^Simulated", stage), seconds] / (2 * B), format = "f", digits = 0)` ms; the large datasets that define the true value take `r pct(sum(rt[grepl("^(Calibration|True)", stage), seconds]) / tot, 0)` of the run time.
+```{r runtime-wall}
+rs <- targets::tar_read(run_settings, store = store)
+heavy <- mt[grepl("^(calibration|truth|sim_results)_maringe", name)]
+# Elapsed time of the simulation stages, from the first start to the last finish
+wall <- as.numeric(difftime(max(heavy$time), min(heavy$time - heavy$seconds), units = "mins"))
+```
+
+Computing time was `r formatC(tot / 60, format = "f", digits = 1)` minutes; with `r rs$workers` parallel worker`r if (rs$workers > 1) "s" else ""` (`crew` `r rs$crew`, `r rs$cores` cores available, `r session$platform$version`) the simulation stages took `r formatC(wall, format = "f", digits = 1)` minutes of elapsed time. The `r n0(2 * B / cfg$batch_size)` batches of simulated studies and the two true values run in parallel; the calibration search is sequential because each step needs the previous one, so it sets the lower bound (`r formatC(rt[grepl("^Calibration", stage), seconds] / 60, format = "f", digits = 1)` minutes) however many workers are used. One CCW analysis of the 200 patients takes about `r formatC(1000 * rt[grepl("^Simulated", stage), seconds] / (2 * B), format = "f", digits = 0)` ms; the large datasets that define the true value take `r pct(sum(rt[grepl("^(Calibration|True)", stage), seconds]) / tot, 0)` of the computing time. Results do not depend on the number of workers: every replicate draws from its own seed.
 
 # 2. How the simulation works {#methods}
 
@@ -282,7 +289,7 @@ knitr::kable(table_results_maringe$performance,
 | Section 4.3: "θ = −0.70, which results in HR~CCW~ = 0.48" | θ\* = `r f2(cal$theta_star)` is confirmed; HR~CCW~ = `r hr(po$truth)` (= observed), exp(θ\*) = `r hr(cal$theta_star)`. |
 | Discussion: "small but detectable bias … type I error rate (7.1%) and 95% CI coverage (93.7%)" | Bias confirmed (`r f3(po$bias)`); coverage **`r pct(po$coverage)`**; type I error **`r pct(pn$reject_0)`**, not 7.1%. |
 | Discussion: "QBA-based adjustments successfully restored unbiasedness, the nominal type I error rate, and nominal 95% CI coverage" | **Confirmed** by cross-fitting: coverage `r pct(adj("95% CI coverage")$value)`, type I error `r pct(adj("Type I error")$value)`. |
-| Section 4 placeholder: "Report also running time on how many cores" | `r f2(mins_all)` minutes on 1 core for the full pipeline (Section 1.2). |
+| Section 4 placeholder: "Report also running time on how many cores" | `r formatC(wall, format = "f", digits = 1)` minutes elapsed with `r rs$workers` worker`r if (rs$workers > 1) "s" else ""` (`r formatC(tot / 60, format = "f", digits = 1)` minutes of computing time; Section 1.2). |
 | ISPE 2026 remark (Wang, Zivich et al.): CCW may have low CI coverage | **Supported:** `r pct(po$coverage)`. |
 
 # 6. Caveats and next steps

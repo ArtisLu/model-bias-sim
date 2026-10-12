@@ -37,13 +37,21 @@ Sys.unsetenv("R_CONFIG_ACTIVE"); targets::tar_make()         # full run (B = 10,
 source("reports/paper/build_section4.R")                     # Word draft of paper Section 4
 ```
 
-Results of the 12 Oct 2026 run (Maringe, B = 10,000, R 4.3.3, UTF-8 locale): unzip
-`results/targets_store_2026-10-12_maringe.zip` here to get `_targets/`; `targets::tar_read()` then works
-without rerunning (about 35 minutes on one core).
+**Parallel runs.** With `crew` installed, the replicates and the true values run on parallel local
+workers (default 2, `workers` in `config/config.yml`). To use more cores without editing the config,
+set `Sys.setenv(QBA_WORKERS = parallel::detectCores() - 1)` before `tar_make()`. Results do not depend
+on the number of workers. The calibration search is sequential, so it takes about 7.5 minutes whatever
+the number of workers.
+
+Results of the 12 Oct 2026 run (Maringe, B = 10,000, R 4.3.3, 2 crew workers, UTF-8 locale): unzip
+`results/targets_store_2026-10-12_maringe.zip` here to get `_targets/`. `targets::tar_outdated()` is then
+empty and `targets::tar_read()` works without rerunning (a full run takes about 21 minutes with 2 workers,
+34 minutes sequentially). The store does not depend on the project folder, but it does depend on the
+locale: run R in a UTF-8 locale (default on Windows with R >= 4.2).
 
 Outputs: `reports/paper/<dataset>/` (paper figures as PNG and EPS), `reports/paper/section4_draft.docx`
-and `reports/fig_protocol_<dataset>.png`. The Quarto colleague report (`reports/qba_report.qmd`) is
-written for two datasets and runs only in the `two_datasets` profile.
+and `reports/fig_protocol_<dataset>.png`. The report `reports/qba_report.html` is rendered by the pipeline
+from `reports/qba_report.qmd` when Maringe is active and the Quarto CLI is installed (not in smoke runs).
 
 ## Layout
 

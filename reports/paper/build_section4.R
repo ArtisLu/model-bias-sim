@@ -40,11 +40,13 @@ B <- po$B
 n_fail <- po$n_fail + pn$n_fail
 n_trt <- sum(is.finite(bd$trt_time))
 # Patterns repeat the time of their branches, so only stems and branches are summed
-meta <- targets::tar_meta(fields = c(name, type, seconds), targets_only = TRUE)
+meta <- targets::tar_meta(fields = c(name, type, time, seconds), targets_only = TRUE)
 meta <- meta[meta$type %in% c("stem", "branch"), ]
 secs_sim <- sum(meta[grepl(paste0("^sim_results_", ds, "_"), meta$name), ]$seconds, na.rm = TRUE)
 secs_all <- sum(meta$seconds, na.rm = TRUE)
-cores <- if (cfg$workers > 1 && requireNamespace("crew", quietly = TRUE)) cfg$workers else 1
+heavy <- meta[grepl(paste0("^(calibration|truth|sim_results)_", ds), meta$name), ]
+mins_wall <- as.numeric(difftime(max(heavy$time), min(heavy$time - heavy$seconds), units = "mins"))
+rs <- targets::tar_read(run_settings)
 r_ver <- paste(R.version$major, R.version$minor, sep = ".")
 n_surg_day1 <- sum(bd$trt_time <= 1)
 
@@ -241,9 +243,11 @@ doc <- txt(doc, paste0(
 ))
 doc <- txt(doc, paste0(
   "Software and run time. The simulation was programmed in R ", r_ver, " (packages survival, data.table ",
-  "and targets) and is available in the Online Supplement. The full run took ", f1(secs_all / 60),
-  " minutes on ", cores, " core", if (cores > 1) "s" else "", " of a cloud virtual machine, of which ", f1(secs_sim / 60),
-  " minutes were the 2 × ", n0(B), " replicates (", f2(secs_sim / (2 * B)), " seconds per replicate)."
+  "and targets; parallel workers via crew) and is available in the Online Supplement. The simulation ",
+  "took ", f1(mins_wall), " minutes with ", rs$workers, " parallel worker", if (rs$workers > 1) "s" else "",
+  " on a cloud virtual machine (", f1(secs_all / 60), " minutes of computing time, of which ",
+  f1(secs_sim / 60), " minutes for the 2 × ", n0(B), " replicates, ", f2(secs_sim / (2 * B)),
+  " seconds per replicate)."
 ))
 
 # 4.5 Results

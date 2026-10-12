@@ -7,19 +7,24 @@ library(tarchetypes)
 
 tar_source("R")
 cfg <- config::get(file = "config/config.yml")
+# config attaches the absolute path of the file; dropping it keeps the store valid when the
+# project is moved or cloned elsewhere (every target depends on cfg)
+attributes(cfg) <- list(names = names(cfg))
 active <- unlist(cfg$active_datasets)
 ds_labels <- vapply(cfg$datasets[active], `[[`, character(1), "label")
 # Report on the Maringe case study: not in smoke runs, and only if Quarto is installed.
 # Kept out of cfg on purpose: every target depends on cfg, so a new key would rerun everything.
 render_report <- "maringe" %in% active && Sys.getenv("R_CONFIG_ACTIVE") != "smoke" &&
   nzchar(Sys.which("quarto"))
-# Parallel workers need crew; without it the pipeline runs sequentially
-use_crew <- cfg$workers > 1 && requireNamespace("crew", quietly = TRUE)
+# Parallel workers need crew; without it the pipeline runs sequentially. QBA_WORKERS overrides
+# cfg$workers without editing the config (every target depends on cfg, so editing it reruns all).
+n_workers <- as.integer(Sys.getenv("QBA_WORKERS", cfg$workers))
+use_crew <- n_workers > 1 && requireNamespace("crew", quietly = TRUE)
 
 tar_option_set(
   packages = c("data.table", "survival", "checkmate"),
   seed = cfg$seed_master,
-  controller = if (use_crew) crew::crew_controller_local(workers = cfg$workers) else NULL
+  controller = if (use_crew) crew::crew_controller_local(workers = n_workers) else NULL
 )
 
 # One target chain per dataset (static branching)
@@ -103,6 +108,12 @@ list(
   tar_target(fig_estimates, save_plot(plot_estimates(sim_all, performance_all, ds_labels),
                                       "reports/fig_estimates.png", height = 5.5), format = "file"),
   tar_target(session, sessioninfo::session_info()),
+  # How the run was parallelised (reported with the run time)
+  tar_target(run_settings, list(
+    workers = if (use_crew) n_workers else 1L,
+    crew = if (use_crew) as.character(utils::packageVersion("crew")) else "not installed",
+    cores = parallel::detectCores()
+  )),
 
   # Two-dataset comparison figure (two_datasets profile only)
   if (length(active) > 1) {
