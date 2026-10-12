@@ -37,6 +37,10 @@ Sys.unsetenv("R_CONFIG_ACTIVE"); targets::tar_make()         # full run (B = 10,
 source("reports/paper/build_section4.R")                     # Word draft of paper Section 4
 ```
 
+Results of the 12 Oct 2026 run (Maringe, B = 10,000, R 4.3.3, UTF-8 locale): unzip
+`results/targets_store_2026-10-12_maringe.zip` here to get `_targets/`; `targets::tar_read()` then works
+without rerunning (about 35 minutes on one core).
+
 Outputs: `reports/paper/<dataset>/` (paper figures as PNG and EPS), `reports/paper/section4_draft.docx`
 and `reports/fig_protocol_<dataset>.png`. The Quarto colleague report (`reports/qba_report.qmd`) is
 written for two datasets and runs only in the `two_datasets` profile.

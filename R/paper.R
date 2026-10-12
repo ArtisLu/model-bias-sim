@@ -205,19 +205,19 @@ make_results_table <- function(obs, dgm, cal, truth_table, performance, correcti
       "Weibull outcome model: on-treatment HR (exp(theta-hat))",
       "Calibrated generating HR, exp(theta*)",
       "True CCW HR in the simulated world, exp(psi(theta*)) (MCSE of psi)",
-      "Large-sample CCW HR with no treatment effect, exp(psi(0)) (MCSE of psi)",
+      "Large-sample CCW HR with no treatment effect, exp(psi(0))",
       "QBA-adjusted HR (95% CI)", "CI inflation factor (empirical / model SE)",
       "Calibrated critical value |z| for a 5% test", "Simulation-calibrated p-value"
     ),
     value = c(
       hr_ci(obs$estimate, obs$ci_lo, obs$ci_hi),
-      formatC(obs$p_value, format = "g", digits = 2),
+      formatC(obs$p_value, format = "f", digits = 3),
       f2(exp(dgm$theta_hat)), f2(exp(cal$theta_star)),
       paste0(f2(exp(po$truth)), " (", f3(po$truth_mcse), ")"),
-      paste0(f2(exp(tn$psi_large_sample)), " (", f3(pn$truth_mcse), ")"),
+      f2(exp(tn$psi_large_sample)),
       hr_ci(cr$est_corr, cr$ci_lo_corr, cr$ci_hi_corr),
       f2(cr$se_inflation), f2(cr$z_crit_calibrated),
-      formatC(cr$p_calibrated, format = "g", digits = 2)
+      formatC(cr$p_calibrated, format = "f", digits = 3)
     )
   )
   # Unadjusted CCW performance with full MCSE (incl. truth MC error) plus cross-fitted adjusted
@@ -243,7 +243,8 @@ make_results_table <- function(obs, dgm, cal, truth_table, performance, correcti
       format(po$n_fail + pn$n_fail)
     ),
     adjusted = c(
-      "", fmt(getp("Bias (log HR)")$value, getp("Bias (log HR)")$mcse, FALSE), "", "", "", "", "",
+      # With two equal folds the cross-fitted bias correction averages to exactly zero
+      "", "0 (by construction)", "", "", "", "", "",
       fmt(getp("95% CI coverage")$value, getp("95% CI coverage")$mcse, TRUE),
       fmt(getp("Power")$value, getp("Power")$mcse, TRUE),
       fmt(getp("Type I error")$value, getp("Type I error")$mcse, TRUE), "", ""
@@ -286,7 +287,7 @@ plot_paper_performance <- function(perf_adj) {
     ggplot2::facet_wrap(~measure, nrow = 1, scales = "free_y") +
     ggplot2::scale_colour_manual(values = paper_cols, name = "Method:") +
     ggplot2::scale_x_discrete(labels = c("CCW", "CCW +\nadjustment")) +
-    ggplot2::labs(x = NULL, y = "Estimate (± 1.96 MCSE)") +
+    ggplot2::labs(x = NULL, y = "Estimate with 95% Monte Carlo interval") +
     theme_paper()
 }
 

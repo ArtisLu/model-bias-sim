@@ -339,7 +339,8 @@ targets::tar_meta(fields = c(name, seconds))   # run time per target</code></pre
 <section class="col" id="open">
   <h2>Open points for the next iteration</h2>
   <ul class="points">
-    <li>Add <code>renv.lock</code> from your machine; this run used R 4.3.3, targets 1.4.1 and tarchetypes 0.7.12 without crew (sequential).</li>
+    <li>Add <code>renv.lock</code> from your machine; this run used R 4.3.3, targets 1.4.1 and tarchetypes 0.7.12 without crew (sequential, about 32 minutes).</li>
+    <li>Run R in a UTF-8 locale (the default on Windows with R 4.2 or later, and on macOS). Switching the locale of an existing <code>_targets/</code> store marks every target as outdated and triggers a full rerun.</li>
     <li>Move <code>build_section4.R</code> into the pipeline once the text is stable.</li>
     <li>Rewrite <code>qba_report.qmd</code> for one dataset, or retire it in favour of the paper outputs.</li>
   </ul>

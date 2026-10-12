@@ -57,7 +57,7 @@ Per scenario: bias ± MCSE (including the truth's MC error), empirical SE, model
 - Bias: corrected estimate = observed − bias (the paper's grid search to first order).
 - CI: widened by empirical SE / model SE in the observed-effect scenario (when > 1).
 - Type I error: p-value = share of null-scenario replicates with |z| ≥ observed |z|; calibrated critical value = 95th percentile of null |z|.
-- **Performance of the adjusted analysis (v0.3):** two-fold cross-fitting over replicates (odd/even replicate index): bias, CI inflation and critical value are estimated on one half and applied to the other, in both scenarios; bias, coverage, power and type I error of the adjusted analysis are then averaged over both halves.
+- **Performance of the adjusted analysis (v0.3):** two-fold cross-fitting over replicates (odd/even replicate index): bias, CI inflation and critical value are estimated on one half and applied to the other, in both scenarios; coverage, power and type I error of the adjusted analysis are then averaged over both halves (with two equal halves the adjusted bias is zero by construction, so it is not reported as a result).
 
 ## Change log
 

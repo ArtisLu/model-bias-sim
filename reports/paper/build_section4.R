@@ -38,8 +38,10 @@ mc_ci <- function(v, mc) paste0(f3(v - 1.96 * mc), " to ", f3(v + 1.96 * mc))
 B <- po$B
 n_fail <- po$n_fail + pn$n_fail
 n_trt <- sum(is.finite(bd$trt_time))
-meta <- targets::tar_meta(fields = c(name, seconds))
-secs_sim <- sum(meta[grepl(paste0("^sim_results_", ds), meta$name), ]$seconds, na.rm = TRUE)
+# Patterns repeat the time of their branches, so only stems and branches are summed
+meta <- targets::tar_meta(fields = c(name, type, seconds), targets_only = TRUE)
+meta <- meta[meta$type %in% c("stem", "branch"), ]
+secs_sim <- sum(meta[grepl(paste0("^sim_results_", ds, "_"), meta$name), ]$seconds, na.rm = TRUE)
 secs_all <- sum(meta$seconds, na.rm = TRUE)
 cores <- if (cfg$workers > 1 && requireNamespace("crew", quietly = TRUE)) cfg$workers else 1
 cpu <- tryCatch(trimws(sub(".*: ", "", grep("model name", readLines("/proc/cpuinfo"), value = TRUE)[1])),
@@ -208,8 +210,8 @@ doc <- txt(doc, paste0(
   "in HR_CCW = ", f2(exp(po$truth)), " (", nrow(cal$path) - 2, " search step",
   if (nrow(cal$path) - 2 == 1) "" else "s", " after the two starting values; MCSE of the true log HR ",
   f3(po$truth_mcse), "). [Current draft: 'θ = −0.70, which results ",
-  "in HR_CCW = 0.48'; HR_CCW equals the observed 0.62 by construction, and exp(−0.70) = 0.50 is the ",
-  "Weibull HR.]"
+  "in HR_CCW = 0.48'; HR_CCW equals the observed HR by construction, and the Weibull HR is exp(θ*) = ",
+  f2(exp(cal$theta_star)), ".]"
 ))
 doc <- txt(doc, paste0(
   "A calibration step is not needed for the type I error rate, as conditional and marginal treatment ",
@@ -271,9 +273,9 @@ doc <- txt(doc, paste0(
   f2(cr$z_crit_calibrated), " instead of 1.96; the simulation-calibrated p-value was ",
   formatC(cr$p_calibrated, format = "f", digits = 3), " (observed p = ",
   formatC(obs_result$p_value, format = "f", digits = 3), "). In the cross-fitted evaluation the ",
-  "adjusted analysis had a bias of ", f3(adj("Bias (log HR)")$value), ", 95% CI coverage of ",
+  "adjusted analysis had 95% CI coverage of ",
   pc(adj("95% CI coverage")$value), " and a type I error of ", pc(adj("Type I error")$value),
-  " (Table 5, Figure 2)."
+  "; its bias is zero by construction (Table 5, Figure 2)."
 ))
 doc <- note(doc, paste0(
   "[Discussion, 2nd paragraph: the current draft quotes type I error 7.1% and coverage 93.7%. This run ",
@@ -290,7 +292,7 @@ doc <- body_add_flextable(doc, perf_ft(table_results$performance), align = "left
 doc <- note(doc, "Adjusted analysis: bias correction, CI widening and calibrated critical value, each estimated on the other half of the replicates (two-fold cross-fitting). MCSE of the bias includes the Monte Carlo error of the true value.")
 
 doc <- body_add_break(doc)
-doc <- caption(doc, "Figure 2: ", "Bias, 95% CI coverage, type I error and power of the CCW analysis before and after QBA adjustment. Points: estimates; bars: ±1.96 MCSE; dashed lines: nominal values.")
+doc <- caption(doc, "Figure 2: ", "Bias, 95% CI coverage, type I error and power of the CCW analysis before and after QBA adjustment. Points: estimates; bars: 95% Monte Carlo intervals (±1.96 MCSE); dashed lines: nominal values. The adjusted bias is zero by construction.")
 doc <- add_fig(doc, file.path(fig_dir, "fig_performance.png"), 6.5, 6.5 * 4.2 / 13)
 doc <- caption(doc, "Figure 3: ", "Distribution of the simulated CCW estimates when the true CCW HR equals the observed estimate (left), and of the z statistics when there is no treatment effect (right), with nominal and calibrated critical values.")
 doc <- add_fig(doc, file.path(fig_dir, "fig_distribution.png"), 6.5, 6.5 * 4.6 / 12)
