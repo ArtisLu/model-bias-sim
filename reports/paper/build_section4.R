@@ -52,6 +52,9 @@ secs_all <- sum(meta$seconds, na.rm = TRUE)
 heavy <- meta[grepl(paste0("^(calibration|truth|sim_results)_", ds), meta$name), ]
 mins_wall <- as.numeric(difftime(max(heavy$time), min(heavy$time - heavy$seconds), units = "mins"))
 rs <- targets::tar_read(run_settings, store = store)
+# Workers actually used, counted from the timestamps of the simulation branches
+source("R/utils.R", local = TRUE)
+rs$workers <- observed_workers(meta)
 r_ver <- paste(R.version$major, R.version$minor, sep = ".")
 n_surg_day1 <- sum(bd$trt_time <= 1)
 

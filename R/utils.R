@@ -62,18 +62,37 @@ safely_run <- function(fun, ...) {
   res
 }
 
-#' How the replicates were run (reported with the run time)
-#' @param default_workers `cfg$workers`; QBA_WORKERS overrides it as in `_targets.R`.
+#' Software used for the replicates (reported with the run time; the number of workers is
+#' counted from the timestamps by `observed_workers()`)
 #' @param sims Replicate results; passed so this is re-recorded only when the replicates rerun.
-#' @return List: workers, crew version, cores, number of replicate rows.
-record_run_settings <- function(default_workers, sims) {
-  # Read at run time, not from a global, so rebuilding only the report cannot change it
-  w <- as.integer(Sys.getenv("QBA_WORKERS", default_workers))
-  crew_ok <- w > 1 && requireNamespace("crew", quietly = TRUE)
+#' @return List: crew version, cores available, number of replicate rows.
+record_run_settings <- function(sims) {
   list(
-    workers = if (crew_ok) w else 1L,
-    crew = if (crew_ok) as.character(utils::packageVersion("crew")) else "not installed",
+    crew = if (requireNamespace("crew", quietly = TRUE)) {
+      as.character(utils::packageVersion("crew"))
+    } else {
+      "not installed"
+    },
     cores = parallel::detectCores(),
     replicates = nrow(sims)
   )
+}
+
+#' Number of parallel workers a run actually used, read from the targets metadata
+#' @param meta `tar_meta()` rows with name, time (finish) and seconds (run time).
+#' @return Integer: highest number of simulation branches running at the same time for a
+#'   sustained period (at least 30 s or 5% of the stage); brief overlaps from the slight delay
+#'   in recording finish times are ignored.
+observed_workers <- function(meta) {
+  m <- meta[grepl("^(sim_results|truth)_.+_[0-9a-f]{8}$", meta$name), ]
+  if (nrow(m) == 0) return(NA_integer_)
+  st <- as.numeric(m$time) - m$seconds
+  en <- as.numeric(m$time)
+  ev <- data.frame(t = c(st, en), d = c(rep(1L, length(st)), rep(-1L, length(en))))
+  ev <- ev[order(ev$t, ev$d), ]
+  level <- cumsum(ev$d)
+  held <- tapply(c(diff(ev$t), 0), level, sum)
+  span <- max(en) - min(st)
+  lv <- as.integer(names(held))[held >= max(30, 0.05 * span)]
+  max(lv[lv > 0], 1L)
 }

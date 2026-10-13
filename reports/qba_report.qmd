@@ -197,6 +197,9 @@ knitr::kable(rt[, .(
 
 ```{r runtime-wall}
 rs <- targets::tar_read(run_settings, store = store)
+# Workers actually used, counted from the timestamps of the simulation branches
+source(file.path(root, "R", "utils.R"), local = TRUE)
+rs$workers <- observed_workers(mt)
 heavy <- mt[grepl("^(calibration|truth|sim_results)_maringe", name)]
 # Elapsed time of the simulation stages, from the first start to the last finish
 wall <- as.numeric(difftime(max(heavy$time), min(heavy$time - heavy$seconds), units = "mins"))
