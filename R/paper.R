@@ -496,6 +496,11 @@ render_report <- function(qmd, store, out_dir, deps) {
     file.copy(qmd, src, overwrite = TRUE)
     on.exit(unlink(src), add = TRUE)
   }
-  quarto::quarto_render(src, execute_params = list(store = normalizePath(store)), quiet = TRUE)
+  # Quarto starts its own R session in the report folder, where renv is not activated: hand it
+  # this session's libraries so it finds the same packages
+  libs <- paste(.libPaths(), collapse = .Platform$path.sep)
+  withr::with_envvar(c(R_LIBS = libs, R_LIBS_USER = libs), {
+    quarto::quarto_render(src, execute_params = list(store = normalizePath(store)), quiet = FALSE)
+  })
   sub("\\.qmd$", ".html", src)
 }

@@ -2704,7 +2704,7 @@ Figure 2: Standardised differences between the surgery and no-surgery arms amon
 </tr>
 <tr class="even">
 <td style="text-align: left;">Data, model fits, summaries, tables, figures, report</td>
-<td style="text-align: right;">0.2</td>
+<td style="text-align: right;">0.4</td>
 <td style="text-align: right;">1%</td>
 <td style="text-align: left;"></td>
 <td style="text-align: right;"></td>
@@ -2713,7 +2713,7 @@ Figure 2: Standardised differences between the surgery and no-surgery arms amon
 </table>
 </div>
 </div>
-<p>Computing time was 34.5 minutes; with 2 parallel workers (<code>crew</code> 0.9.3, 2 cores available, R version 4.3.3 (2024-02-29)) the simulation stages took 20.6 minutes of elapsed time. The 80 batches of simulated studies and the two true values run in parallel; the calibration search is sequential because each step needs the previous one, so it sets the lower bound (6.9 minutes) however many workers are used. One CCW analysis of the 200 patients takes about 58 ms; the large datasets that define the true value take 43% of the computing time. Results do not depend on the number of workers: every replicate draws from its own seed.</p>
+<p>Computing time was 34.7 minutes; with 2 parallel workers (<code>crew</code> 0.9.3, 2 cores available, R version 4.3.3 (2024-02-29)) the simulation stages took 20.6 minutes of elapsed time. The 80 batches of simulated studies and the two true values run in parallel; the calibration search is sequential because each step needs the previous one, so it sets the lower bound (6.9 minutes) however many workers are used. One CCW analysis of the 200 patients takes about 58 ms; the large datasets that define the true value take 43% of the computing time. Results do not depend on the number of workers: every replicate draws from its own seed.</p>
 </section>
 </section>
 <section id="methods" class="level1">
@@ -3008,7 +3008,7 @@ Figure 4: Left: CCW estimates across replays when the true CCW HR equals the ob
 </tr>
 <tr class="even">
 <td>Section 4 placeholder: “Report also running time on how many cores”</td>
-<td>20.6 minutes elapsed with 2 workers (34.5 minutes of computing time; Section 1.2).</td>
+<td>20.6 minutes elapsed with 2 workers (34.7 minutes of computing time; Section 1.2).</td>
 </tr>
 <tr class="odd">
 <td>ISPE 2026 remark (Wang, Zivich et al.): CCW may have low CI coverage</td>
