@@ -50,7 +50,8 @@ f2 <- function(x) formatC(x, format = "f", digits = 2)
 f3 <- function(x) formatC(x, format = "f", digits = 3)
 n0 <- function(x) format(x, big.mark = ",")
 pct <- function(x, d = 1) paste0(formatC(100 * x, format = "f", digits = d), "%")
-hr <- function(x) f2(exp(x))
+# HRs and CIs with 4 decimals; type I error with 3 (percent)
+hr <- function(x) formatC(exp(x), format = "f", digits = 4)
 ci <- function(lo, hi) paste0(hr(lo), "–", hr(hi))
 cfg <- config::get(file = file.path(root, "config", "config.yml"))
 spec <- cfg$datasets$maringe
@@ -81,14 +82,14 @@ mins_all <- sum(meta$seconds, na.rm = TRUE) / 60
 | HR, surgery within 6 months vs not (95% CI) | `r hr(cr$est_obs)` (`r ci(cr$ci_lo_obs, cr$ci_hi_obs)`), p = `r f3(cr$p_obs)` | `r hr(cr$est_corr)` (`r ci(cr$ci_lo_corr, cr$ci_hi_corr)`), calibrated p = `r f3(cr$p_calibrated)` |
 | Bias, log HR (MC 95% interval) | **`r f3(po$bias)`** (`r bias_ci(po)`) | 0 by construction |
 | 95% CI coverage (target 95%) | **`r pct(po$coverage)`** | `r pct(adj("95% CI coverage")$value)` |
-| Type I error (target 5%) | **`r pct(pn$reject_0)`** | `r pct(adj("Type I error")$value)` |
+| Type I error (target 5%) | **`r pct(pn$reject_0, 3)`** | `r pct(adj("Type I error")$value, 3)` |
 | Power at the observed effect | `r pct(po$reject_0)` | `r pct(adj("Power")$value)` |
 
 Monte Carlo SE: about 0.2–0.3 percentage points for coverage and type I error, 0.006 for the bias. Bold cells differ from the target by more than their Monte Carlo error. Adjusted performance is cross-fitted (corrections estimated on one half of the replays, checked on the other).
 
 - **Bias:** the average estimate is HR `r hr(po$mean_est)` instead of `r hr(po$truth)`, slightly too favourable to surgery (`r pct(abs(po$std_bias), 0)` of one SE).
 - **Coverage:** the robust SE is `r pct(abs(po$rel_err_modse))` too small, so the CIs cover the truth `r pct(po$coverage)` of the time.
-- **Type I error:** with no surgery effect, `r pct(pn$reject_0)` of studies are significant, `r pct(pn$reject_0_lower)` of them in favour of surgery. Even with unlimited data the null CCW HR would be `r hr(truth_table_maringe[scenario == "null", psi_large_sample])`.
+- **Type I error:** with no surgery effect, `r pct(pn$reject_0, 3)` of studies are significant, `r pct(pn$reject_0_lower, 3)` of them in favour of surgery. Even with unlimited data the null CCW HR would be `r hr(truth_table_maringe[scenario == "null", psi_large_sample])`.
 - **Conclusion unchanged:** the observed result was not significant (p = `r f3(cr$p_obs)`) and is less so after adjustment (p = `r f3(cr$p_calibrated)`).
 :::
 
@@ -257,7 +258,7 @@ knitr::include_graphics(fig_png("fig_performance"), error = FALSE)
 
 **Coverage.** The empirical SE is `r f3(po$emp_se)`, the average robust SE `r f3(po$mod_se)` (`r pct(abs(po$rel_err_modse))` too small). Together with the bias this gives coverage of `r pct(po$coverage)` (MCSE `r pct(po$coverage_mcse)`).
 
-**Type I error.** With no surgery effect, `r pct(pn$reject_0)` (MCSE `r pct(pn$reject_0_mcse)`) of studies reject H0: HR = 1 at 5%; `r pct(pn$reject_0_lower)` in favour of surgery and only `r pct(pn$reject_0 - pn$reject_0_lower)` against it. The null estimates are centred at HR `r hr(pn$mean_est)`, of which `r hr(truth_table_maringe[scenario == "null", psi_large_sample])` would remain with unlimited data, most likely because the censoring-weight models do not fully capture how surgery decisions depend on patient characteristics.
+**Type I error.** With no surgery effect, `r pct(pn$reject_0, 3)` (MCSE `r pct(pn$reject_0_mcse, 3)`) of studies reject H0: HR = 1 at 5%; `r pct(pn$reject_0_lower, 3)` in favour of surgery and only `r pct(pn$reject_0 - pn$reject_0_lower, 3)` against it. The null estimates are centred at HR `r hr(pn$mean_est)`, of which `r hr(truth_table_maringe[scenario == "null", psi_large_sample])` would remain with unlimited data, most likely because the censoring-weight models do not fully capture how surgery decisions depend on patient characteristics.
 
 **Power** to detect the observed effect is `r pct(po$reject_0)`, consistent with the observed CI that includes 1.
 
@@ -278,7 +279,7 @@ knitr::kable(table_results_maringe$analysis, col.names = c("", "Value"), align =
 - **CI:** widened by empirical SE / model SE = `r f2(cr$se_inflation)`.
 - **Test:** a 5% test needs |z| > `r f2(cr$z_crit_calibrated)` instead of 1.96; the calibrated p-value is the share of no-effect replays with |z| at least as large as observed.
 
-**Does the adjusted analysis work?** Applying the adjustments estimated from half of the replays to the other half: coverage `r pct(adj("95% CI coverage")$value)` (MCSE `r pct(adj("95% CI coverage")$mcse)`), type I error `r pct(adj("Type I error")$value)` (MCSE `r pct(adj("Type I error")$mcse)`). Both are back at their targets. The price is lower power (`r pct(adj("Power")$value)` instead of `r pct(po$reject_0)`), because part of the original power came from the inflated type I error.
+**Does the adjusted analysis work?** Applying the adjustments estimated from half of the replays to the other half: coverage `r pct(adj("95% CI coverage")$value)` (MCSE `r pct(adj("95% CI coverage")$mcse)`), type I error `r pct(adj("Type I error")$value, 3)` (MCSE `r pct(adj("Type I error")$mcse, 3)`). Both are back at their targets. The price is lower power (`r pct(adj("Power")$value)` instead of `r pct(po$reject_0)`), because part of the original power came from the inflated type I error.
 
 ```{r tab-perf}
 #| tbl-cap: "Performance before and after QBA adjustment (estimate (MCSE))."
@@ -294,8 +295,8 @@ knitr::kable(table_results_maringe$performance,
 | Section 2.3: censoring predicted by switching the event/censoring indicator | **Implemented**; for Maringe it reduces to administrative censoring at 1 year (Section 2.3 above). Step figure and Table 1 "Censoring" row to be aligned. |
 | Section 4.2: covariates age, sex, performance status, stage, deprivation, Charlson, emergency | **As used** in both the weight models and the Weibull model. |
 | Section 4.3: "θ = −0.70, which results in HR~CCW~ = 0.48" | θ\* = `r f2(cal$theta_star)` is confirmed; HR~CCW~ = `r hr(po$truth)` (= observed), exp(θ\*) = `r hr(cal$theta_star)`. |
-| Discussion: "small but detectable bias … type I error rate (7.1%) and 95% CI coverage (93.7%)" | Bias confirmed (`r f3(po$bias)`); coverage **`r pct(po$coverage)`**; type I error **`r pct(pn$reject_0)`**, not 7.1%. |
-| Discussion: "QBA-based adjustments successfully restored unbiasedness, the nominal type I error rate, and nominal 95% CI coverage" | **Confirmed** by cross-fitting: coverage `r pct(adj("95% CI coverage")$value)`, type I error `r pct(adj("Type I error")$value)`. |
+| Discussion: "small but detectable bias … type I error rate (7.1%) and 95% CI coverage (93.7%)" | Bias confirmed (`r f3(po$bias)`); coverage **`r pct(po$coverage)`**; type I error **`r pct(pn$reject_0, 3)`**, not 7.1%. |
+| Discussion: "QBA-based adjustments successfully restored unbiasedness, the nominal type I error rate, and nominal 95% CI coverage" | **Confirmed** by cross-fitting: coverage `r pct(adj("95% CI coverage")$value)`, type I error `r pct(adj("Type I error")$value, 3)`. |
 | Section 4 placeholder: "Report also running time on how many cores" | `r formatC(wall, format = "f", digits = 1)` minutes elapsed with `r rs$workers` worker`r if (isTRUE(rs$workers > 1)) "s" else ""` (`r formatC(tot / 60, format = "f", digits = 1)` minutes of computing time; Section 1.2). |
 | ISPE 2026 remark (Wang, Zivich et al.): CCW may have low CI coverage | **Supported:** `r pct(po$coverage)`. |
 
@@ -316,7 +317,7 @@ tab <- performance_maringe[, .(
   `θ (DGM)` = f2(theta), `True HR` = hr(truth), `Mean HR` = hr(mean_est),
   `Bias (log HR)` = f3(bias), MCSE = f3(bias_mcse_total),
   `Emp. SE` = f3(emp_se), `Model SE` = f3(mod_se),
-  Coverage = pct(coverage), `Reject HR = 1` = pct(reject_0),
+  Coverage = pct(coverage), `Reject HR = 1` = pct(reject_0, 3),
   `Mean deaths` = formatC(mean_outcomes, format = "f", digits = 1), Failed = n_fail
 )]
 knitr::kable(tab, align = "lrrrrrrrrrrr")

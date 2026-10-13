@@ -30,9 +30,11 @@ out_file <- file.path(out_root, "paper", "section4_draft.docx")
 f1 <- function(x) formatC(x, format = "f", digits = 1)
 f2 <- function(x) formatC(x, format = "f", digits = 2)
 f3 <- function(x) formatC(x, format = "f", digits = 3)
+f4 <- function(x) formatC(x, format = "f", digits = 4)
 pc <- function(x, d = 1) paste0(formatC(100 * x, format = "f", digits = d), "%")
 n0 <- function(x) format(x, big.mark = ",")
-hr_ci <- function(e, lo, hi) paste0(f2(exp(e)), " (95% CI ", f2(exp(lo)), "–", f2(exp(hi)), ")")
+# HRs and CIs with 4 decimals; type I error with 3 (percent)
+hr_ci <- function(e, lo, hi) paste0(f4(exp(e)), " (95% CI ", f4(exp(lo)), "–", f4(exp(hi)), ")")
 po <- performance[scenario == "observed"]
 pn <- performance[scenario == "null"]
 cr <- correction
@@ -214,19 +216,19 @@ doc <- txt(doc, paste0(
   "CCW analysis: the reference model was applied to ", cfg$truth$n_rep, " independent simulated datasets ",
   "of ", n0(ceiling(cfg$truth$n_target / nrow(bd)) * nrow(bd)), " patients each (stacked copies of the ",
   "baseline data) and the estimates were averaged. The calibration was performed by a secant search ",
-  "starting from the fitted coefficient θ̂ = ", f2(dgm$theta_hat), " (HR ", f2(exp(dgm$theta_hat)),
-  "): θ was tuned until ψ(θ) equalled the observed CCW hazard ratio of ", f2(exp(obs_result$estimate)),
-  ". This needed θ* = ", f2(cal$theta_star), " (Weibull HR ", f2(exp(cal$theta_star)), "), which results ",
-  "in HR_CCW = ", f2(exp(po$truth)), " (", nrow(cal$path) - 2, " search step",
+  "starting from the fitted coefficient θ̂ = ", f2(dgm$theta_hat), " (HR ", f4(exp(dgm$theta_hat)),
+  "): θ was tuned until ψ(θ) equalled the observed CCW hazard ratio of ", f4(exp(obs_result$estimate)),
+  ". This needed θ* = ", f2(cal$theta_star), " (Weibull HR ", f4(exp(cal$theta_star)), "), which results ",
+  "in HR_CCW = ", f4(exp(po$truth)), " (", nrow(cal$path) - 2, " search step",
   if (nrow(cal$path) - 2 == 1) "" else "s", " after the two starting values; MCSE of the true log HR ",
   f3(po$truth_mcse), "). [Current draft: 'θ = −0.70, which results ",
   "in HR_CCW = 0.48'; HR_CCW equals the observed HR by construction, and the Weibull HR is exp(θ*) = ",
-  f2(exp(cal$theta_star)), ".]"
+  f4(exp(cal$theta_star)), ".]"
 ))
 doc <- txt(doc, paste0(
   "A calibration step is not needed for the type I error rate, as conditional and marginal treatment ",
   "effects are both HR = 1 in this case. With unlimited data, the CCW analysis would nevertheless ",
-  "estimate HR ", f2(exp(tn$psi_large_sample)), " when surgery has no effect, a small offset that the ",
+  "estimate HR ", f4(exp(tn$psi_large_sample)), " when surgery has no effect, a small offset that the ",
   "finite-sample results below include."
 ))
 
@@ -267,16 +269,16 @@ doc <- txt(doc, paste0(
   "The observed CCW analysis estimated HR = ", hr_ci(obs_result$estimate, obs_result$ci_lo,
   obs_result$ci_hi), " for surgery within 6 months versus no surgery within 6 months (Table 4). With the ",
   "true CCW HR set to this value, the average estimate across ", n0(B), " simulated studies was HR ",
-  f2(exp(po$mean_est)), ": a bias of ", f3(po$bias), " on the log scale (95% MC interval ",
+  f4(exp(po$mean_est)), ": a bias of ", f3(po$bias), " on the log scale (95% MC interval ",
   mc_ci(po$bias, po$bias_mcse_total), "; ", f1(abs(100 * po$std_bias)), "% of the empirical SE), ",
   if (bias_sig) "which is statistically detectable but small. " else "which is not statistically different from zero. ",
   "The robust SE was on average ", f1(abs(100 * po$rel_err_modse)), "% ",
   if (po$rel_err_modse < 0) "smaller" else "larger", " than the empirical SE, and the coverage of the ",
   "nominal 95% CI was ", pc(po$coverage), " (MCSE ", pc(po$coverage_mcse), ")",
   if (cov_sig) ", a significant departure from 95%. " else ", consistent with 95%. ",
-  "With no effect of surgery, ", pc(pn$reject_0), " (MCSE ", pc(pn$reject_0_mcse), ") of the simulated ",
+  "With no effect of surgery, ", pc(pn$reject_0, 3), " (MCSE ", pc(pn$reject_0_mcse, 3), ") of the simulated ",
   "studies rejected H0 at the 5% level", if (t1_sig) ", a significant inflation of the type I error" else "",
-  "; ", pc(pn$reject_0_lower), " were rejections in favour of surgery. Power to detect the observed ",
+  "; ", pc(pn$reject_0_lower, 3), " were rejections in favour of surgery. Power to detect the observed ",
   "effect was ", pc(po$reject_0), " (Table 5, Figures 2 and 3)."
 ))
 doc <- txt(doc, paste0(
@@ -286,13 +288,13 @@ doc <- txt(doc, paste0(
   formatC(cr$p_calibrated, format = "f", digits = 3), " (observed p = ",
   formatC(obs_result$p_value, format = "f", digits = 3), "). In the cross-fitted evaluation the ",
   "adjusted analysis had 95% CI coverage of ",
-  pc(adj("95% CI coverage")$value), " and a type I error of ", pc(adj("Type I error")$value),
+  pc(adj("95% CI coverage")$value), " and a type I error of ", pc(adj("Type I error")$value, 3),
   "; its bias is zero by construction (Table 5, Figure 2)."
 ))
 doc <- note(doc, paste0(
   "[Discussion, 2nd paragraph: the current draft quotes type I error 7.1% and coverage 93.7%. This run ",
   "(B = ", n0(B), "): bias ", f3(po$bias), ", coverage ", pc(po$coverage), ", type I error ",
-  pc(pn$reject_0), ".]"
+  pc(pn$reject_0, 3), ".]"
 ))
 
 doc <- caption(doc, "Table 4: ", "Observed CCW analysis, prediction model and calibration")

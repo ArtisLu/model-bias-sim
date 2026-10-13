@@ -125,11 +125,12 @@ make_dgm_table <- function(dgm, spec) {
     se <- k * m$se[terms]
     lb <- ifelse(terms %in% names(lab), lab[terms], terms)
     f2 <- function(x) formatC(x, format = "f", digits = 2)
+    f4 <- function(x) formatC(x, format = "f", digits = 4)
     rbind(
       data.table::data.table(model = model, term = "Weibull shape (rho)", hr = f2(m$rho), ci = ""),
       data.table::data.table(
-        model = model, term = unname(lb), hr = f2(exp(b)),
-        ci = paste0(f2(exp(b - 1.96 * se)), " to ", f2(exp(b + 1.96 * se)))
+        model = model, term = unname(lb), hr = f4(exp(b)),
+        ci = paste0(f4(exp(b - 1.96 * se)), " to ", f4(exp(b + 1.96 * se)))
       )
     )[, n_events := m$n_events]
   }
@@ -193,8 +194,10 @@ evaluate_adjustment <- function(sim_results, truth_table, level = 0.95) {
 make_results_table <- function(obs, dgm, cal, truth_table, performance, correction, perf_adj, spec) {
   f2 <- function(x) formatC(x, format = "f", digits = 2)
   f3 <- function(x) formatC(x, format = "f", digits = 3)
-  pc <- function(x) formatC(100 * x, format = "f", digits = 1)
-  hr_ci <- function(e, lo, hi) paste0(f2(exp(e)), " (", f2(exp(lo)), " to ", f2(exp(hi)), ")")
+  f4 <- function(x) formatC(x, format = "f", digits = 4)
+  pc <- function(x, d = 1) formatC(100 * x, format = "f", digits = d)
+  # HRs and their CIs with 4 decimals, type I error with 3 (percent)
+  hr_ci <- function(e, lo, hi) paste0(f4(exp(e)), " (", f4(exp(lo)), " to ", f4(exp(hi)), ")")
   po <- performance[scenario == "observed"]
   pn <- performance[scenario == "null"]
   tn <- truth_table[scenario == "null"]
@@ -212,9 +215,9 @@ make_results_table <- function(obs, dgm, cal, truth_table, performance, correcti
     value = c(
       hr_ci(obs$estimate, obs$ci_lo, obs$ci_hi),
       formatC(obs$p_value, format = "f", digits = 3),
-      f2(exp(dgm$theta_hat)), f2(exp(cal$theta_star)),
-      paste0(f2(exp(po$truth)), " (", f3(po$truth_mcse), ")"),
-      f2(exp(tn$psi_large_sample)),
+      f4(exp(dgm$theta_hat)), f4(exp(cal$theta_star)),
+      paste0(f4(exp(po$truth)), " (", f3(po$truth_mcse), ")"),
+      f4(exp(tn$psi_large_sample)),
       hr_ci(cr$est_corr, cr$ci_lo_corr, cr$ci_hi_corr),
       f2(cr$se_inflation), f2(cr$z_crit_calibrated),
       formatC(cr$p_calibrated, format = "f", digits = 3)
@@ -223,7 +226,9 @@ make_results_table <- function(obs, dgm, cal, truth_table, performance, correcti
   # Unadjusted CCW performance with full MCSE (incl. truth MC error) plus cross-fitted adjusted
   pa <- perf_adj[analysis == "CCW + QBA adjustment"]
   getp <- function(m) pa[measure == m]
-  fmt <- function(v, mc, pct) if (pct) paste0(pc(v), " (", pc(mc), ")") else paste0(f3(v), " (", f3(mc), ")")
+  fmt <- function(v, mc, pct, d = 1) {
+    if (pct) paste0(pc(v, d), " (", pc(mc, d), ")") else paste0(f3(v), " (", f3(mc), ")")
+  }
   performance_tab <- data.table::data.table(
     measure = c(
       "Mean estimate, log HR (true value)", "Bias, log HR", "Relative bias, % of empirical SE",
@@ -238,8 +243,8 @@ make_results_table <- function(obs, dgm, cal, truth_table, performance, correcti
       fmt(po$emp_se, po$emp_se_mcse, FALSE), f3(po$mod_se), pc(po$rel_err_modse), f3(po$rmse),
       fmt(po$coverage, po$coverage_mcse, TRUE),
       fmt(po$reject_0, po$reject_0_mcse, TRUE),
-      fmt(pn$reject_0, pn$reject_0_mcse, TRUE),
-      pc(pn$reject_0_lower),
+      fmt(pn$reject_0, pn$reject_0_mcse, TRUE, 3),
+      pc(pn$reject_0_lower, 3),
       format(po$n_fail + pn$n_fail)
     ),
     adjusted = c(
@@ -247,7 +252,7 @@ make_results_table <- function(obs, dgm, cal, truth_table, performance, correcti
       "", "0 (by construction)", "", "", "", "", "",
       fmt(getp("95% CI coverage")$value, getp("95% CI coverage")$mcse, TRUE),
       fmt(getp("Power")$value, getp("Power")$mcse, TRUE),
-      fmt(getp("Type I error")$value, getp("Type I error")$mcse, TRUE), "", ""
+      fmt(getp("Type I error")$value, getp("Type I error")$mcse, TRUE, 3), "", ""
     )
   )
   list(analysis = analysis, performance = performance_tab, dgm = make_dgm_table(dgm, spec))
