@@ -31,7 +31,7 @@ while (!file.exists(file.path(root, "_targets.R")) && dirname(root) != root) roo
 store <- if (nzchar(params$store)) params$store else file.path(root, "_targets")
 targets::tar_load(c(
   performance_maringe, correction_maringe, calibration_maringe, dgm_maringe, obs_result_maringe,
-  base_data_maringe, sim_results_maringe, truth_table_maringe, perf_adjusted_maringe, perf_boot_t_maringe,
+  base_data_maringe, sim_results_maringe, truth_table_maringe, perf_adjusted_maringe, ci_methods_maringe, table_ci_methods_maringe,
   table_baseline_maringe, table_results_maringe, performance_rsimsum_maringe, session
 ), store = store)
 # Figure targets store paths relative to the project root
@@ -64,7 +64,9 @@ dm <- dgm_maringe
 bd <- base_data_maringe
 obs <- obs_result_maringe
 adj <- function(m) perf_adjusted_maringe[analysis == "CCW + QBA adjustment" & measure == m]
-bt <- function(tg, src) perf_boot_t_maringe[scenario == tg & source == src]
+cim <- function(m, tg, src = NA) ci_methods_maringe[method == m & scenario == tg & (is.na(src) & is.na(source) | source %in% src)]
+wo <- cim("Wald (robust SE)", "observed")
+wn <- cim("Wald (robust SE)", "null")
 B <- po$B
 n_fail <- po$n_fail + pn$n_fail
 bias_ci <- function(p) paste0(f3(p$bias - 1.96 * p$bias_mcse_total), " to ", f3(p$bias + 1.96 * p$bias_mcse_total))
@@ -86,11 +88,12 @@ mins_all <- sum(meta$seconds, na.rm = TRUE) / 60
 | 95% CI coverage (target 95%) | **`r pct(po$coverage)`** | `r pct(adj("95% CI coverage")$value)` |
 | Type I error (target 5%) | **`r pct(pn$reject_0, 3)`** | `r pct(adj("Type I error")$value, 3)` |
 | Power at the observed effect | `r pct(po$reject_0)` | `r pct(adj("Power")$value)` |
+| Alternative: HR with simulation bootstrap-t 95% CI (Section 4.1) | | `r hr(cr$est_obs)` (`r ci(cr$ci_lo_boot_t, cr$ci_hi_boot_t)`) |
 
 Monte Carlo SE: about 0.2–0.3 percentage points for coverage and type I error, 0.006 for the bias. Bold cells differ from the target by more than their Monte Carlo error. Adjusted performance is cross-fitted (corrections estimated on one half of the replays, checked on the other).
 
 - **Bias:** the average estimate is HR `r hr(po$mean_est)` instead of `r hr(po$truth)`, slightly too favourable to surgery (`r pct(abs(po$std_bias), 0)` of one SE).
-- **Coverage:** the robust SE is `r pct(abs(po$rel_err_modse))` too small, so the CIs cover the truth `r pct(po$coverage)` of the time.
+- **Coverage:** the CIs cover the truth `r pct(po$coverage)` of the time. The robust SE is `r pct(abs(po$rel_err_modse))` too small, and the misses are lopsided: `r pct(wo$miss_below)` of CIs lie entirely below the true HR, `r pct(wo$miss_above)` above.
 - **Type I error:** with no surgery effect, `r pct(pn$reject_0, 3)` of studies are significant, `r pct(pn$reject_0_lower, 3)` of them in favour of surgery. Even with unlimited data the null CCW HR would be `r hr(truth_table_maringe[scenario == "null", psi_large_sample])`.
 - **Conclusion unchanged:** the observed result was not significant (p = `r f3(cr$p_obs)`) and is less so after adjustment (p = `r f3(cr$p_calibrated)`).
 :::
@@ -258,7 +261,7 @@ knitr::include_graphics(fig_png("fig_performance"), error = FALSE)
 
 **Bias.** The average estimate is HR `r hr(po$mean_est)` against a truth of `r hr(po$truth)`: a bias of `r f3(po$bias)` on the log scale (MC 95% interval `r bias_ci(po)`), away from the null, detectable but small (`r pct(abs(po$std_bias), 1)` of one SE).
 
-**Coverage.** The empirical SE is `r f3(po$emp_se)`, the average robust SE `r f3(po$mod_se)` (`r pct(abs(po$rel_err_modse))` too small). Together with the bias this gives coverage of `r pct(po$coverage)` (MCSE `r pct(po$coverage_mcse)`).
+**Coverage.** The empirical SE is `r f3(po$emp_se)`, the average robust SE `r f3(po$mod_se)` (`r pct(abs(po$rel_err_modse))` too small). Coverage is `r pct(po$coverage)` (MCSE `r pct(po$coverage_mcse)`), `r pct(wn$coverage)` with no effect. The SE shortfall and the bias alone would give about 94%; the rest comes from the lopsided misses: estimates and SEs are positively correlated, so low estimates get CIs that are too narrow. `r pct(wo$miss_below)` of CIs lie entirely below the true HR and `r pct(wo$miss_above)` above (`r pct(wn$miss_below)` and `r pct(wn$miss_above)` with no effect; 2.5% each expected). This is the same asymmetry as the type I error.
 
 **Type I error.** With no surgery effect, `r pct(pn$reject_0, 3)` (MCSE `r pct(pn$reject_0_mcse, 3)`) of studies reject H0: HR = 1 at 5%; `r pct(pn$reject_0_lower, 3)` in favour of surgery and only `r pct(pn$reject_0 - pn$reject_0_lower, 3)` against it. The null estimates are centred at HR `r hr(pn$mean_est)`, of which `r hr(truth_table_maringe[scenario == "null", psi_large_sample])` would remain with unlimited data, most likely because the censoring-weight models do not fully capture how surgery decisions depend on patient characteristics.
 
@@ -283,14 +286,37 @@ knitr::kable(table_results_maringe$analysis, col.names = c("", "Value"), align =
 
 **Does the adjusted analysis work?** Applying the adjustments estimated from half of the replays to the other half: coverage `r pct(adj("95% CI coverage")$value)` (MCSE `r pct(adj("95% CI coverage")$mcse)`), type I error `r pct(adj("Type I error")$value, 3)` (MCSE `r pct(adj("Type I error")$mcse, 3)`). Both are back at their targets. The price is lower power (`r pct(adj("Power")$value)` instead of `r pct(po$reject_0)`), because part of the original power came from the inflated type I error.
 
-**Asymmetric alternative (simulation bootstrap-t).** The symmetric widening cannot correct the lopsided misses: low estimates come with small SEs, so too many CIs lie entirely above the truth. Taking the 2.5% and 97.5% quantiles of $T = (\hat\psi - \psi)/\widehat{SE}$ over the observed-effect replays ($`r f2(cr$t_q_lo)`$ and $`r f2(cr$t_q_hi)`$ instead of $\pm 1.96$) gives the CI $[\hat\psi - q_{97.5}\widehat{SE},\ \hat\psi - q_{2.5}\widehat{SE}]$, a parametric bootstrap-t: HR `r hr(cr$est_obs)` (`r ci(cr$ci_lo_boot_t, cr$ci_hi_boot_t)`). Cross-fitted coverage in the same scenario (`r pct(bt("observed", "observed")$coverage)`) is close to circular; the real check is transfer between scenarios, which tests whether $T$ is pivotal: quantiles from the observed-effect replays cover the null truth `r pct(bt("null", "observed")$coverage)` of the time (MCSE `r pct(bt("null", "observed")$mcse)`), quantiles from the null replays cover the observed truth `r pct(bt("observed", "null")$coverage)`.
-
 ```{r tab-perf}
 #| tbl-cap: "Performance before and after QBA adjustment (estimate (MCSE))."
 knitr::kable(table_results_maringe$performance,
              col.names = c("Performance measure", "CCW as published", "CCW + QBA adjustment"),
              align = "lrr")
 ```
+
+## 4.1 Alternative CI: simulation bootstrap-t {#boot-t}
+
+The symmetric widening cannot correct the lopsided misses. An asymmetric CI uses the replays directly: the 2.5% and 97.5% quantiles of $T = (\hat\psi - \psi)/\widehat{SE}$ over the replays with true HR = observed are `r f2(cr$t_q_lo)` and `r f2(cr$t_q_hi)` (instead of ±1.96), and the CI is $[\hat\psi - q_{97.5}\widehat{SE},\ \hat\psi - q_{2.5}\widehat{SE}]$. This is a parametric bootstrap-t (Efron & Tibshirani 1993, ch. 12): the model fitted to the data generates the replays, and the observed estimate plays the role of the truth. $T$ already contains the bias, so the CI is built around the unadjusted estimate.
+
+**Observed result:** HR `r hr(cr$est_obs)` (`r ci(cr$ci_lo_boot_t, cr$ci_hi_boot_t)`), against Wald `r ci(cr$ci_lo_obs, cr$ci_hi_obs)` and QBA widening `r ci(cr$ci_lo_corr, cr$ci_hi_corr)`.
+
+**How to read the checks.** Both learned CIs are checked by cross-fitting (learned on half of the replays, checked on the other half). In the same scenario this is close to circular: the CI was tuned to exactly that distribution. The informative check is *transfer*: learn the CI at one true effect, check it at the other. It shows whether the CI still works when the true effect differs from the one used to build it, which is the situation of a real study.
+
+```{r tab-ci}
+#| tbl-cap: "Coverage of three 95% CIs, % (MCSE), and the share of CIs lying entirely below or above the truth (2.5% each expected)."
+knitr::kable(table_ci_methods_maringe,
+             col.names = c("CI", "Checked at", "Learned from", "Coverage", "Below truth", "Above truth"),
+             align = "lllrrr")
+```
+
+```{r fig-ci}
+#| fig-cap: "Coverage and one-sided misses of the Wald, QBA-widened and bootstrap-t CIs. Bars: 95% Monte Carlo interval. Dashed: nominal value."
+#| out-width: "100%"
+knitr::include_graphics(fig(grep("fig_ci_methods\\.png$", targets::tar_read(fig_ci_methods_maringe, store = store), value = TRUE)), error = FALSE)
+```
+
+- **Transfer (the real check):** bootstrap-t `r pct(cim("Bootstrap-t", "null", "observed")$coverage)` at no effect and `r pct(cim("Bootstrap-t", "observed", "null")$coverage)` at the observed effect; QBA widening `r pct(cim("QBA widening", "null", "observed")$coverage)` and `r pct(cim("QBA widening", "observed", "null")$coverage)`; Wald `r pct(wn$coverage)` and `r pct(wo$coverage)`.
+- **Why not exactly 95%:** $T$ is not fully pivotal. Its quantiles shift with the true effect, so quantiles learned at one effect over-correct at the other (misses flip side in the transfer rows). Exact coverage at every effect would need test inversion over a grid of θ (a confidence belt).
+- **Validity** rests on the same assumption as the rest of the QBA: the simulated world (Weibull outcome model, fixed covariates and surgery dates) is close enough to the real one.
 
 # 5. Alignment with the draft paper (version 0.62, 8 Oct) {#alignment}
 
@@ -390,6 +416,7 @@ $$W_i(t) = 1 \text{ for } t < g, \qquad W_i(t) = 1/\hat\pi(Z_i) \text{ for } t \
 - **Calibration:** $\theta^*$ solves $\tilde\psi(\theta) = \hat\psi_{\text{obs}}$ (secant search from $\hat\theta$, `r cfg$calibration$n_rep` large datasets per step, tolerance `r cfg$calibration$tol`).
 - **Performance** over $B = `r n0(B)`$ replicates: bias $= \bar{\hat\psi} - \psi$; coverage $= B^{-1}\sum_b I(|\hat\psi_b - \psi| \le 1.96\,\widehat{SE}_b)$; rejection rate $= B^{-1}\sum_b I(|\hat\psi_b| > 1.96\,\widehat{SE}_b)$. The MCSE of the bias includes the truth's MC error.
 - **Adjustment:** $\hat\psi^{adj} = \hat\psi - \widehat{\text{bias}}$; CI $\hat\psi^{adj} \pm 1.96\, k\, \widehat{SE}$ with $k = \max(1, SE_{emp}/SE_{mod})$; critical value $z^*$ = 95th percentile of $|z|$ under $\theta = 0$. Two-fold cross-fitting over replicate index for the adjusted performance.
+- **Bootstrap-t CI:** $[\hat\psi - q_{97.5}\widehat{SE},\ \hat\psi - q_{2.5}\widehat{SE}]$, $q_a$ = quantile of $(\hat\psi_b - \psi)/\widehat{SE}_b$ over the replicates at $\theta^*$ (type 8). Transfer check: quantiles learned at $\theta^*$ applied at $\theta = 0$ and vice versa.
 
 ```{r code-truth}
 #| echo: true

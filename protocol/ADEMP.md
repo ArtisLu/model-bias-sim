@@ -56,6 +56,7 @@ Per scenario: bias ± MCSE (including the truth's MC error), empirical SE, model
 
 - Bias: corrected estimate = observed − bias (the paper's grid search to first order).
 - CI: widened by empirical SE / model SE in the observed-effect scenario (when > 1).
+- Alternative CI: simulation bootstrap-t, [ψ̂ − q97.5·SE, ψ̂ − q2.5·SE] with q = quantiles of (ψ̂_b − ψ)/SE_b over the observed-effect replicates. Wald, widened and bootstrap-t CIs are compared by coverage and one-sided misses, cross-fitted within each scenario and transferred between scenarios.
 - Type I error: p-value = share of null-scenario replicates with |z| ≥ observed |z|; calibrated critical value = 95th percentile of null |z|.
 - **Performance of the adjusted analysis (v0.3):** two-fold cross-fitting over replicates (odd/even replicate index): bias, CI inflation and critical value are estimated on one half and applied to the other, in both scenarios; coverage, power and type I error of the adjusted analysis are then averaged over both halves (with two equal halves the adjusted bias is zero by construction, so it is not reported as a result).
 
@@ -68,3 +69,4 @@ Per scenario: bias ± MCSE (including the truth's MC error), empirical SE, model
 | 2026-10-02 | Added null-specific measures (coverage of 0, direction of rejections) | Clarify type I error definition |
 | 2026-10-05 | v0.2: added SynPUF dataset; θ grid replaced by observed-effect + null scenarios; secant calibration; truth with 24 large datasets; correction = observed − bias | Focus on the observed effect; compare datasets |
 | 2026-10-12 | v0.3: Maringe only for the paper (SynPUF kept in code, `two_datasets` profile); Weibull censoring model with switched indicator and time-varying treatment where loss to follow-up exists (SynPUF; Maringe has administrative censoring only); B = 10,000; cross-fitted performance of the adjusted analysis; paper tables/figures | Paper uses one dataset; paper Section 2.3 (censoring, including after treatment start, is predicted) |
+| 2026-10-13 | Added simulation bootstrap-t CI as an alternative; CI comparison table and figure | Wald misses are lopsided (est–SE correlation), which symmetric widening cannot fix |

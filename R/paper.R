@@ -186,38 +186,126 @@ evaluate_adjustment <- function(sim_results, truth_table, level = 0.95) {
   )
 }
 
-#' Coverage of the simulation bootstrap-t CI: cross-fitted and transferred between scenarios
+#' Coverage of three 95% CIs: Wald (robust SE), QBA symmetric widening, simulation bootstrap-t
 #' @param sim_results Replicates (one dataset, both scenarios).
 #' @param truth_table From `make_truth_table()`; @param level Nominal level.
-#' @return data.table: scenario (where coverage is checked), source (where the quantiles come
-#'   from), check, coverage, mcse, miss_lo, miss_hi, n.
-evaluate_boot_t <- function(sim_results, truth_table, level = 0.95) {
+#' @return data.table: method, scenario (where coverage is checked), source (scenario the
+#'   CI was learned from), check, coverage, mcse, miss_below, miss_above, n.
+compare_ci_methods <- function(sim_results, truth_table, level = 0.95) {
+  z <- stats::qnorm(1 - (1 - level) / 2)
   d <- merge(sim_results[!is.na(estimate)], truth_table[, .(dataset, theta, scenario, truth)],
              by = c("dataset", "theta"))
   d[, fold := rep %% 2L]
-  grid <- data.table::CJ(target = c("observed", "null"), source = c("observed", "null"))
-  out <- lapply(seq_len(nrow(grid)), function(i) {
-    tg <- grid$target[i]
-    sc <- grid$source[i]
-    res <- data.table::rbindlist(lapply(0:1, function(k) {
-      s <- d[fold != k & scenario == sc]
-      q <- boot_t_quantiles(s$estimate, s$se, s$truth[1], level)
-      x <- d[fold == k & scenario == tg]
-      ci <- boot_t_ci(x$estimate, x$se, q)
-      # Same scenario: near-circular (only MC error between folds); transfer: real check of
-      # whether T is pivotal across true effects
-      data.table::data.table(hit = ci$lo <= x$truth & x$truth <= ci$hi,
-                             lo = ci$hi < x$truth, hi = ci$lo > x$truth)
-    }))
-    m <- mean(res$hit)
+  summ <- function(lo, hi, truth) {
+    hit <- lo <= truth & truth <= hi
+    m <- mean(hit)
     data.table::data.table(
-      scenario = tg, source = sc,
-      check = if (tg == sc) "cross-fitted" else "transfer",
-      coverage = m, mcse = sqrt(m * (1 - m) / nrow(res)),
-      miss_lo = mean(res$lo), miss_hi = mean(res$hi), n = nrow(res)
+      coverage = m, mcse = sqrt(m * (1 - m) / length(hit)),
+      # Misses split by side: a symmetric CI should miss 2.5% on each
+      miss_below = mean(hi < truth), miss_above = mean(lo > truth), n = length(hit)
     )
+  }
+  # Learned CI: fitted on one half of the replicates of `src`, checked on the other half of `tg`
+  learned <- function(method, src, tg) {
+    res <- data.table::rbindlist(lapply(0:1, function(k) {
+      s <- d[fold != k & scenario == src]
+      x <- d[fold == k & scenario == tg]
+      if (method == "QBA widening") {
+        b <- mean(s$estimate - s$truth)
+        k_se <- max(1, stats::sd(s$estimate) / sqrt(mean(s$se^2)))
+        data.table::data.table(lo = x$estimate - b - z * k_se * x$se,
+                               hi = x$estimate - b + z * k_se * x$se, truth = x$truth)
+      } else {
+        ci <- boot_t_ci(x$estimate, x$se, boot_t_quantiles(s$estimate, s$se, s$truth[1], level))
+        data.table::data.table(lo = ci$lo, hi = ci$hi, truth = x$truth)
+      }
+    }))
+    # Same scenario is near-circular; transfer tests whether the CI holds at other true effects
+    cbind(data.table::data.table(method = method, scenario = tg, source = src,
+                                 check = if (src == tg) "cross-fitted" else "transfer"),
+          summ(res$lo, res$hi, res$truth))
+  }
+  wald <- lapply(c("observed", "null"), function(tg) {
+    x <- d[scenario == tg]
+    cbind(data.table::data.table(method = "Wald (robust SE)", scenario = tg, source = NA_character_,
+                                 check = "none"),
+          summ(x$estimate - z * x$se, x$estimate + z * x$se, x$truth))
   })
-  data.table::rbindlist(out)
+  grid <- data.table::CJ(method = c("QBA widening", "Bootstrap-t"), src = c("observed", "null"),
+                         tg = c("observed", "null"), sorted = FALSE)
+  rbind(data.table::rbindlist(wald),
+        data.table::rbindlist(Map(learned, grid$method, grid$src, grid$tg)))
+}
+
+#' Table of CI coverage by method (estimate (MCSE), misses by side)
+#' @param ci From `compare_ci_methods()`.
+#' @return data.table ready for printing.
+make_ci_table <- function(ci) {
+  pc <- function(x, d = 1) formatC(100 * x, format = "f", digits = d)
+  lab <- c(observed = "True HR = observed", null = "No effect")
+  learned_from <- data.table::fifelse(
+    is.na(ci$source), "Not learned",
+    paste0(lab[ci$source], data.table::fifelse(ci$check == "cross-fitted", " (cross-fitted)", " (transfer)"))
+  )
+  data.table::data.table(
+    method = ci$method, checked_in = unname(lab[ci$scenario]), learned_from = learned_from,
+    coverage = paste0(pc(ci$coverage), " (", pc(ci$mcse), ")"),
+    below = pc(ci$miss_below), above = pc(ci$miss_above)
+  )[order(match(method, c("Wald (robust SE)", "QBA widening", "Bootstrap-t")), checked_in)]
+}
+
+ci_cols <- c("Wald (robust SE)" = "black", "QBA widening" = "red", "Bootstrap-t" = "#1f6fb4")
+
+#' Figure: coverage and one-sided misses of the three CIs (points +- 1.96 MCSE)
+#' @param ci From `compare_ci_methods()`.
+#' @return ggplot.
+plot_ci_methods <- function(ci) {
+  d <- data.table::copy(ci)
+  d[, learned := factor(data.table::fifelse(check == "none", "Not learned",
+                                            data.table::fifelse(check == "transfer",
+                                                                "Other scenario (transfer)",
+                                                                "Same scenario (cross-fitted)")),
+                        levels = c("Not learned", "Same scenario (cross-fitted)",
+                                   "Other scenario (transfer)"))]
+  d[, scenario := factor(scenario, c("observed", "null"),
+                         c("Checked at true HR = observed", "Checked at no effect"))]
+  long <- data.table::rbindlist(list(
+    d[, .(method, scenario, learned, measure = "Coverage", value = coverage, mcse, ref = 0.95)],
+    d[, .(method, scenario, learned, measure = "CI entirely above truth", value = miss_above,
+          mcse = sqrt(miss_above * (1 - miss_above) / n), ref = 0.025)],
+    d[, .(method, scenario, learned, measure = "CI entirely below truth", value = miss_below,
+          mcse = sqrt(miss_below * (1 - miss_below) / n), ref = 0.025)]
+  ))
+  long[, measure := factor(measure, c("Coverage", "CI entirely above truth", "CI entirely below truth"))]
+  long[, method := factor(method, names(ci_cols))]
+  refs <- unique(long[, .(measure, ref)])
+  pd <- ggplot2::position_dodge(width = 0.6)
+  ggplot2::ggplot(long, ggplot2::aes(method, 100 * value, colour = method, shape = learned)) +
+    ggplot2::geom_hline(data = refs, ggplot2::aes(yintercept = 100 * ref), linetype = "dashed") +
+    ggplot2::geom_linerange(ggplot2::aes(ymin = 100 * (value - 1.96 * mcse),
+                                         ymax = 100 * (value + 1.96 * mcse), group = learned),
+                            position = pd, linewidth = 1) +
+    ggplot2::geom_point(ggplot2::aes(group = learned), position = pd, size = 2.6) +
+    ggplot2::facet_grid(measure ~ scenario, scales = "free_y") +
+    ggplot2::scale_colour_manual(values = ci_cols, guide = "none") +
+    ggplot2::scale_shape_manual(values = c(16, 17, 15), name = "CI learned from:", drop = FALSE) +
+    ggplot2::scale_x_discrete(labels = c("Wald", "QBA\nwidening", "Bootstrap-t")) +
+    ggplot2::labs(x = NULL, y = "% of replicates (95% Monte Carlo interval)") +
+    theme_paper(base_size = 11) +
+    ggplot2::theme(legend.position = "bottom")
+}
+
+#' Save the CI comparison figure (PNG and EPS, like the other paper figures)
+#' @param ci From `compare_ci_methods()`; @param dir Output folder.
+#' @return File paths.
+save_ci_figure <- function(ci, dir) {
+  dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+  p <- plot_ci_methods(ci)
+  png <- file.path(dir, "fig_ci_methods.png")
+  eps <- file.path(dir, "fig_ci_methods.eps")
+  ggplot2::ggsave(png, p, width = 10, height = 7.5, dpi = 600, bg = "white")
+  ggplot2::ggsave(eps, p, width = 10, height = 7.5, device = grDevices::cairo_ps)
+  c(png, eps)
 }
 
 #' Observed analysis, reference model, calibration and performance in one list of tables

@@ -47,9 +47,15 @@ test_that("bootstrap-t CI is asymmetric when T is skewed and recovers nominal co
   ci <- boot_t_ci(-0.5, 0.27, q)
   expect_lt(ci$lo, -0.5)
   expect_gt(ci$hi, -0.5)
-  pb <- evaluate_boot_t(sim, tt)
-  expect_equal(nrow(pb), 4L)
-  expect_true(all(abs(pb[check == "cross-fitted", coverage] - 0.95) < 0.02))
+  cm <- compare_ci_methods(sim, tt)
+  expect_equal(nrow(cm), 10L)
+  expect_setequal(unique(cm$method), c("Wald (robust SE)", "QBA widening", "Bootstrap-t"))
+  bt <- cm[method == "Bootstrap-t" & check == "cross-fitted"]
+  expect_true(all(abs(bt$coverage - 0.95) < 0.02))
+  # Misses add up to non-coverage
+  expect_equal(cm$miss_below + cm$miss_above, 1 - cm$coverage)
+  expect_equal(nrow(make_ci_table(cm)), 10L)
+  expect_s3_class(plot_ci_methods(cm), "ggplot")
 })
 
 test_that("balance at the grace period uses the clones still at risk and both weightings", {

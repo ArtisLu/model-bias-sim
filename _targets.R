@@ -70,7 +70,11 @@ per_dataset <- tar_map(
   tar_target(raw_data, read_raw_data(base_file, ds)),
   tar_target(table_baseline, make_baseline_table(raw_data, ds, cfg$datasets[[ds]])),
   tar_target(perf_adjusted, evaluate_adjustment(sim_results, truth_table)),
-  tar_target(perf_boot_t, evaluate_boot_t(sim_results, truth_table)),
+  # Alternative CIs (Wald, QBA widening, simulation bootstrap-t): coverage, table, figure
+  tar_target(ci_methods, compare_ci_methods(sim_results, truth_table)),
+  tar_target(table_ci_methods, make_ci_table(ci_methods)),
+  tar_target(fig_ci_methods, save_ci_figure(ci_methods, file.path(out_dir, "paper", ds)),
+             format = "file"),
   tar_target(table_results, make_results_table(
     obs_result, dgm, calibration, truth_table, performance, correction, perf_adjusted,
     cfg$datasets[[ds]]
@@ -134,6 +138,7 @@ list(
           performance_maringe, correction_maringe, calibration_maringe, dgm_maringe,
           obs_result_maringe, base_data_maringe, sim_results_maringe, truth_table_maringe,
           perf_adjusted_maringe, table_baseline_maringe, table_results_maringe,
+          ci_methods_maringe, table_ci_methods_maringe, fig_ci_methods_maringe,
           performance_rsimsum_maringe, balance_maringe, paper_figures_maringe,
           fig_protocol_maringe, fig_balance_maringe, run_settings, session
         )
