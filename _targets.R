@@ -115,11 +115,7 @@ list(
              format = "file"),
   tar_target(session, sessioninfo::session_info()),
   # How the run was parallelised (reported with the run time)
-  tar_target(run_settings, list(
-    workers = if (use_crew) n_workers else 1L,
-    crew = if (use_crew) as.character(utils::packageVersion("crew")) else "not installed",
-    cores = parallel::detectCores()
-  )),
+  tar_target(run_settings, record_run_settings(cfg$workers, sim_all)),
 
   # Two-dataset comparison figure (two_datasets profile only)
   if (length(active) > 1) {

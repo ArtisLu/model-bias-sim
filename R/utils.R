@@ -61,3 +61,19 @@ safely_run <- function(fun, ...) {
   }
   res
 }
+
+#' How the replicates were run (reported with the run time)
+#' @param default_workers `cfg$workers`; QBA_WORKERS overrides it as in `_targets.R`.
+#' @param sims Replicate results; passed so this is re-recorded only when the replicates rerun.
+#' @return List: workers, crew version, cores, number of replicate rows.
+record_run_settings <- function(default_workers, sims) {
+  # Read at run time, not from a global, so rebuilding only the report cannot change it
+  w <- as.integer(Sys.getenv("QBA_WORKERS", default_workers))
+  crew_ok <- w > 1 && requireNamespace("crew", quietly = TRUE)
+  list(
+    workers = if (crew_ok) w else 1L,
+    crew = if (crew_ok) as.character(utils::packageVersion("crew")) else "not installed",
+    cores = parallel::detectCores(),
+    replicates = nrow(sims)
+  )
+}
