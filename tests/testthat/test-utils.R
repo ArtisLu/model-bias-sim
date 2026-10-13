@@ -18,7 +18,7 @@ test_that("same seed gives identical draws; seeds are reproducible", {
 test_that("observed_workers counts sustained parallelism and ignores recording lag", {
   mk <- function(workers, n = 60, dur = 14, lag = 1) {
     start <- rep(seq(0, by = dur, length.out = n / workers), each = workers)
-    data.frame(name = sprintf("sim_results_maringe_%08x", seq_len(n)),
+    data.frame(name = sprintf("sim_results_maringe_%016x", seq_len(n)), type = "branch",
                time = as.POSIXct(start + dur + lag, origin = "1970-01-01"), seconds = dur)
   }
   expect_equal(observed_workers(mk(1)), 1L)

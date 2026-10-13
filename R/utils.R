@@ -84,7 +84,9 @@ record_run_settings <- function(sims) {
 #'   sustained period (at least 30 s or 5% of the stage); brief overlaps from the slight delay
 #'   in recording finish times are ignored.
 observed_workers <- function(meta) {
-  m <- meta[grepl("^(sim_results|truth)_.+_[0-9a-f]{8}$", meta$name), ]
+  # Branches of the simulation patterns (branch-name hashes differ between targets versions)
+  is_branch <- if ("type" %in% names(meta)) meta$type == "branch" else TRUE
+  m <- meta[is_branch & grepl("^(sim_results|truth)_", meta$name), ]
   if (nrow(m) == 0) return(NA_integer_)
   st <- as.numeric(m$time) - m$seconds
   en <- as.numeric(m$time)

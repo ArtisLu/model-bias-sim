@@ -252,7 +252,7 @@ doc <- txt(doc, paste0(
 doc <- txt(doc, paste0(
   "Software and run time. The simulation was programmed in R ", r_ver, " (packages survival, data.table ",
   "and targets; parallel workers via crew) and is available in the Online Supplement. The simulation ",
-  "took ", f1(mins_wall), " minutes with ", rs$workers, " parallel worker", if (rs$workers > 1) "s" else "",
+  "took ", f1(mins_wall), " minutes with ", rs$workers, " parallel worker", if (isTRUE(rs$workers > 1)) "s" else "",
   " on a cloud virtual machine (", f1(secs_all / 60), " minutes of computing time, of which ",
   f1(secs_sim / 60), " minutes for the 2 × ", n0(B), " replicates, ", f2(secs_sim / (2 * B)),
   " seconds per replicate)."
