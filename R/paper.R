@@ -496,7 +496,7 @@ render_report <- function(qmd, store, out_dir, deps) {
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
   src <- file.path(out_dir, basename(qmd))
   # Other profiles render a temporary copy, so the paper report in reports/ is never touched
-  copied <- normalizePath(src, mustWork = FALSE) != normalizePath(qmd)
+  copied <- normalizePath(src, winslash = "/", mustWork = FALSE) != normalizePath(qmd, winslash = "/")
   if (copied) {
     file.copy(qmd, src, overwrite = TRUE)
     on.exit(unlink(src), add = TRUE)
@@ -505,7 +505,9 @@ render_report <- function(qmd, store, out_dir, deps) {
   # this session's libraries so it finds the same packages
   libs <- paste(.libPaths(), collapse = .Platform$path.sep)
   withr::with_envvar(c(R_LIBS = libs, R_LIBS_USER = libs), {
-    quarto::quarto_render(src, execute_params = list(store = normalizePath(store)), quiet = FALSE)
+    quarto::quarto_render(
+      src, execute_params = list(store = normalizePath(store, winslash = "/")), quiet = FALSE
+    )
   })
   sub("\\.qmd$", ".html", src)
 }

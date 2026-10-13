@@ -24,7 +24,8 @@ execute:
 ```{r setup}
 library(data.table)
 # Project root = first folder upwards that holds _targets.R (the report may be rendered elsewhere)
-root <- normalizePath(".")
+# Forward slashes: backslashes in Windows paths would be read as escapes in the image links
+root <- normalizePath(".", winslash = "/")
 while (!file.exists(file.path(root, "_targets.R")) && dirname(root) != root) root <- dirname(root)
 # Results store: passed by the pipeline (one per config profile), else the paper run
 store <- if (nzchar(params$store)) params$store else file.path(root, "_targets")
