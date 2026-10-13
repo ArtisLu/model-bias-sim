@@ -70,6 +70,7 @@ per_dataset <- tar_map(
   tar_target(raw_data, read_raw_data(base_file, ds)),
   tar_target(table_baseline, make_baseline_table(raw_data, ds, cfg$datasets[[ds]])),
   tar_target(perf_adjusted, evaluate_adjustment(sim_results, truth_table)),
+  tar_target(perf_boot_t, evaluate_boot_t(sim_results, truth_table)),
   tar_target(table_results, make_results_table(
     obs_result, dgm, calibration, truth_table, performance, correction, perf_adjusted,
     cfg$datasets[[ds]]

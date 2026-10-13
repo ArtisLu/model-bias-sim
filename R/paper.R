@@ -186,6 +186,40 @@ evaluate_adjustment <- function(sim_results, truth_table, level = 0.95) {
   )
 }
 
+#' Coverage of the simulation bootstrap-t CI: cross-fitted and transferred between scenarios
+#' @param sim_results Replicates (one dataset, both scenarios).
+#' @param truth_table From `make_truth_table()`; @param level Nominal level.
+#' @return data.table: scenario (where coverage is checked), source (where the quantiles come
+#'   from), check, coverage, mcse, miss_lo, miss_hi, n.
+evaluate_boot_t <- function(sim_results, truth_table, level = 0.95) {
+  d <- merge(sim_results[!is.na(estimate)], truth_table[, .(dataset, theta, scenario, truth)],
+             by = c("dataset", "theta"))
+  d[, fold := rep %% 2L]
+  grid <- data.table::CJ(target = c("observed", "null"), source = c("observed", "null"))
+  out <- lapply(seq_len(nrow(grid)), function(i) {
+    tg <- grid$target[i]
+    sc <- grid$source[i]
+    res <- data.table::rbindlist(lapply(0:1, function(k) {
+      s <- d[fold != k & scenario == sc]
+      q <- boot_t_quantiles(s$estimate, s$se, s$truth[1], level)
+      x <- d[fold == k & scenario == tg]
+      ci <- boot_t_ci(x$estimate, x$se, q)
+      # Same scenario: near-circular (only MC error between folds); transfer: real check of
+      # whether T is pivotal across true effects
+      data.table::data.table(hit = ci$lo <= x$truth & x$truth <= ci$hi,
+                             lo = ci$hi < x$truth, hi = ci$lo > x$truth)
+    }))
+    m <- mean(res$hit)
+    data.table::data.table(
+      scenario = tg, source = sc,
+      check = if (tg == sc) "cross-fitted" else "transfer",
+      coverage = m, mcse = sqrt(m * (1 - m) / nrow(res)),
+      miss_lo = mean(res$lo), miss_hi = mean(res$hi), n = nrow(res)
+    )
+  })
+  data.table::rbindlist(out)
+}
+
 #' Observed analysis, reference model, calibration and performance in one list of tables
 #' @param obs Observed pipeline result; @param dgm Fitted DGM; @param cal Calibration.
 #' @param truth_table,performance,correction,perf_adj Pipeline targets for one dataset.
@@ -210,6 +244,7 @@ make_results_table <- function(obs, dgm, cal, truth_table, performance, correcti
       "True CCW HR in the simulated world, exp(psi(theta*)) (MCSE of psi)",
       "Large-sample CCW HR with no treatment effect, exp(psi(0))",
       "QBA-adjusted HR (95% CI)", "CI inflation factor (empirical / model SE)",
+      "Observed HR with simulation bootstrap-t 95% CI",
       "Calibrated critical value |z| for a 5% test", "Simulation-calibrated p-value"
     ),
     value = c(
@@ -219,7 +254,9 @@ make_results_table <- function(obs, dgm, cal, truth_table, performance, correcti
       paste0(f4(exp(po$truth)), " (", f3(po$truth_mcse), ")"),
       f4(exp(tn$psi_large_sample)),
       hr_ci(cr$est_corr, cr$ci_lo_corr, cr$ci_hi_corr),
-      f2(cr$se_inflation), f2(cr$z_crit_calibrated),
+      f2(cr$se_inflation),
+      hr_ci(obs$estimate, cr$ci_lo_boot_t, cr$ci_hi_boot_t),
+      f2(cr$z_crit_calibrated),
       formatC(cr$p_calibrated, format = "f", digits = 3)
     )
   )

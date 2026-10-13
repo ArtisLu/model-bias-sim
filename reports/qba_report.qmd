@@ -31,7 +31,7 @@ while (!file.exists(file.path(root, "_targets.R")) && dirname(root) != root) roo
 store <- if (nzchar(params$store)) params$store else file.path(root, "_targets")
 targets::tar_load(c(
   performance_maringe, correction_maringe, calibration_maringe, dgm_maringe, obs_result_maringe,
-  base_data_maringe, sim_results_maringe, truth_table_maringe, perf_adjusted_maringe,
+  base_data_maringe, sim_results_maringe, truth_table_maringe, perf_adjusted_maringe, perf_boot_t_maringe,
   table_baseline_maringe, table_results_maringe, performance_rsimsum_maringe, session
 ), store = store)
 # Figure targets store paths relative to the project root
@@ -64,6 +64,7 @@ dm <- dgm_maringe
 bd <- base_data_maringe
 obs <- obs_result_maringe
 adj <- function(m) perf_adjusted_maringe[analysis == "CCW + QBA adjustment" & measure == m]
+bt <- function(tg, src) perf_boot_t_maringe[scenario == tg & source == src]
 B <- po$B
 n_fail <- po$n_fail + pn$n_fail
 bias_ci <- function(p) paste0(f3(p$bias - 1.96 * p$bias_mcse_total), " to ", f3(p$bias + 1.96 * p$bias_mcse_total))
@@ -281,6 +282,8 @@ knitr::kable(table_results_maringe$analysis, col.names = c("", "Value"), align =
 - **Test:** a 5% test needs |z| > `r f2(cr$z_crit_calibrated)` instead of 1.96; the calibrated p-value is the share of no-effect replays with |z| at least as large as observed.
 
 **Does the adjusted analysis work?** Applying the adjustments estimated from half of the replays to the other half: coverage `r pct(adj("95% CI coverage")$value)` (MCSE `r pct(adj("95% CI coverage")$mcse)`), type I error `r pct(adj("Type I error")$value, 3)` (MCSE `r pct(adj("Type I error")$mcse, 3)`). Both are back at their targets. The price is lower power (`r pct(adj("Power")$value)` instead of `r pct(po$reject_0)`), because part of the original power came from the inflated type I error.
+
+**Asymmetric alternative (simulation bootstrap-t).** The symmetric widening cannot correct the lopsided misses: low estimates come with small SEs, so too many CIs lie entirely above the truth. Taking the 2.5% and 97.5% quantiles of $T = (\hat\psi - \psi)/\widehat{SE}$ over the observed-effect replays ($`r f2(cr$t_q_lo)`$ and $`r f2(cr$t_q_hi)`$ instead of $\pm 1.96$) gives the CI $[\hat\psi - q_{97.5}\widehat{SE},\ \hat\psi - q_{2.5}\widehat{SE}]$, a parametric bootstrap-t: HR `r hr(cr$est_obs)` (`r ci(cr$ci_lo_boot_t, cr$ci_hi_boot_t)`). Cross-fitted coverage in the same scenario (`r pct(bt("observed", "observed")$coverage)`) is close to circular; the real check is transfer between scenarios, which tests whether $T$ is pivotal: quantiles from the observed-effect replays cover the null truth `r pct(bt("null", "observed")$coverage)` of the time (MCSE `r pct(bt("null", "observed")$mcse)`), quantiles from the null replays cover the observed truth `r pct(bt("observed", "null")$coverage)`.
 
 ```{r tab-perf}
 #| tbl-cap: "Performance before and after QBA adjustment (estimate (MCSE))."

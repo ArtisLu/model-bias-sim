@@ -31,6 +31,27 @@ test_that("cross-fitted adjustment returns both analyses and sensible proportion
   expect_true(all(pa[measure != "Bias (log HR)", value] >= 0 & pa[measure != "Bias (log HR)", value] <= 1))
 })
 
+test_that("bootstrap-t CI is asymmetric when T is skewed and recovers nominal coverage", {
+  set.seed(2)
+  # SE correlated with the estimate, as in the Maringe replicates
+  e <- rnorm(4000, -0.5, 0.28)
+  sim <- data.table(dataset = "m", theta = rep(c(-0.7, 0), each = 2000), rep = rep(1:2000, 2),
+                    estimate = c(e[1:2000], e[2001:4000] + 0.5), status = "ok")
+  sim[, se := 0.27 + 0.1 * (estimate - mean(estimate)), by = theta]
+  tt <- data.table(dataset = "m", theta = c(-0.7, 0), scenario = c("observed", "null"),
+                   truth = c(-0.5, 0))
+  q <- boot_t_quantiles(sim[theta == -0.7, estimate], sim[theta == -0.7, se], -0.5)
+  expect_lt(q[["q_lo"]], 0)
+  expect_gt(q[["q_hi"]], 0)
+  expect_false(isTRUE(all.equal(-q[["q_lo"]], q[["q_hi"]], tolerance = 0.02)))
+  ci <- boot_t_ci(-0.5, 0.27, q)
+  expect_lt(ci$lo, -0.5)
+  expect_gt(ci$hi, -0.5)
+  pb <- evaluate_boot_t(sim, tt)
+  expect_equal(nrow(pb), 4L)
+  expect_true(all(abs(pb[check == "cross-fitted", coverage] - 0.95) < 0.02))
+})
+
 test_that("balance at the grace period uses the clones still at risk and both weightings", {
   b <- ccw_balance(base_test, spec_m$pipeline, spec_m$dgm$covariates)
   expect_setequal(unique(b$weighting), c("Unweighted", "Weighted"))
