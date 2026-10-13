@@ -10,6 +10,9 @@ cfg <- config::get(file = "config/config.yml")
 # config attaches the absolute path of the file; dropping it keeps the store valid when the
 # project is moved or cloned elsewhere (every target depends on cfg)
 attributes(cfg) <- list(names = names(cfg))
+# Confidence-belt settings live in their own file so that adding them did not invalidate cfg
+cfg_belt <- config::get(file = "config/belt.yml")
+attributes(cfg_belt) <- list(names = names(cfg_belt))
 active <- unlist(cfg$active_datasets)
 ds_labels <- vapply(cfg$datasets[active], `[[`, character(1), "label")
 # Outputs of the default (paper) profile go to reports/; other profiles get their own folder so a
@@ -64,14 +67,33 @@ per_dataset <- tar_map(
   # Summaries and correction (paper Steps 6-7)
   tar_target(performance, summarise_performance(sim_results, truth_table)),
   tar_target(performance_rsimsum, rsimsum_check(sim_results, truth_table)),
-  tar_target(correction, correct_estimate(obs_result, performance, sim_results, ds)),
+  # Confidence belt: extra grid of true effects, their truths and replicates (same CRN seeds)
+  tar_target(belt_theta, belt_theta_grid(cfg_belt$datasets[[ds]]$theta_extra, theta_sim)),
+  tar_target(
+    belt_truth,
+    compute_truth(dgm, base_data, belt_theta, cfg$datasets[[ds]]$pipeline, cfg,
+                  n_rep = cfg_belt$truth_n_rep),
+    pattern = map(belt_theta)
+  ),
+  tar_target(
+    belt_sims,
+    run_batch(base_data, dgm, belt_theta, crn_seeds[seq_len(min(cfg_belt$B, cfg$B))],
+              belt_batch_id, cfg$datasets[[ds]]$pipeline, cfg$batch_size)[, dataset := ds],
+    pattern = cross(belt_theta, belt_batch_id)
+  ),
+  tar_target(belt, fit_belt(
+    rbind(sim_results, belt_sims, fill = TRUE),
+    rbind(truth_table[, .(theta, truth)], belt_truth[, .(theta, truth)]), cfg_belt
+  )),
+  tar_target(correction, correct_estimate(obs_result, performance, sim_results, ds, belt = belt)),
 
   # Publication outputs (paper Section 4): tables, adjusted performance, figures
   tar_target(raw_data, read_raw_data(base_file, ds)),
   tar_target(table_baseline, make_baseline_table(raw_data, ds, cfg$datasets[[ds]])),
   tar_target(perf_adjusted, evaluate_adjustment(sim_results, truth_table)),
-  # Alternative CIs (Wald, QBA widening, simulation bootstrap-t): coverage, table, figure
-  tar_target(ci_methods, compare_ci_methods(sim_results, truth_table)),
+  # Alternative CIs (Wald, QBA widening, bootstrap-t, confidence belt): coverage, table, figures
+  tar_target(ci_methods, compare_ci_methods(sim_results, truth_table, belt)),
+  tar_target(fig_belt, save_belt_figure(belt, file.path(out_dir, "paper", ds)), format = "file"),
   tar_target(table_ci_methods, make_ci_table(ci_methods)),
   tar_target(fig_ci_methods, save_ci_figure(ci_methods, file.path(out_dir, "paper", ds)),
              format = "file"),
@@ -98,6 +120,7 @@ per_dataset <- tar_map(
 list(
   tar_target(crn_seeds, make_crn_seeds(cfg$seed_master, cfg$B)),
   tar_target(batch_id, seq_len(ceiling(cfg$B / cfg$batch_size))),
+  tar_target(belt_batch_id, seq_len(ceiling(min(cfg_belt$B, cfg$B) / cfg$batch_size))),
   per_dataset,
 
   # Across datasets
@@ -138,7 +161,8 @@ list(
           performance_maringe, correction_maringe, calibration_maringe, dgm_maringe,
           obs_result_maringe, base_data_maringe, sim_results_maringe, truth_table_maringe,
           perf_adjusted_maringe, table_baseline_maringe, table_results_maringe,
-          ci_methods_maringe, table_ci_methods_maringe, fig_ci_methods_maringe,
+          ci_methods_maringe, table_ci_methods_maringe, fig_ci_methods_maringe, belt_maringe,
+          fig_belt_maringe,
           performance_rsimsum_maringe, balance_maringe, paper_figures_maringe,
           fig_protocol_maringe, fig_balance_maringe, run_settings, session
         )

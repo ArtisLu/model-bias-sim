@@ -31,7 +31,7 @@ while (!file.exists(file.path(root, "_targets.R")) && dirname(root) != root) roo
 store <- if (nzchar(params$store)) params$store else file.path(root, "_targets")
 targets::tar_load(c(
   performance_maringe, correction_maringe, calibration_maringe, dgm_maringe, obs_result_maringe,
-  base_data_maringe, sim_results_maringe, truth_table_maringe, perf_adjusted_maringe, ci_methods_maringe, table_ci_methods_maringe,
+  base_data_maringe, sim_results_maringe, truth_table_maringe, perf_adjusted_maringe, ci_methods_maringe, table_ci_methods_maringe, belt_maringe,
   table_baseline_maringe, table_results_maringe, performance_rsimsum_maringe, session
 ), store = store)
 # Figure targets store paths relative to the project root
@@ -55,6 +55,7 @@ pct <- function(x, d = 1) paste0(formatC(100 * x, format = "f", digits = d), "%"
 hr <- function(x) formatC(exp(x), format = "f", digits = 4)
 ci <- function(lo, hi) paste0(hr(lo), "–", hr(hi))
 cfg <- config::get(file = file.path(root, "config", "config.yml"))
+cfg_belt_truth <- config::get(file = file.path(root, "config", "belt.yml"))$truth_n_rep
 spec <- cfg$datasets$maringe
 po <- performance_maringe[scenario == "observed"]
 pn <- performance_maringe[scenario == "null"]
@@ -67,6 +68,8 @@ adj <- function(m) perf_adjusted_maringe[analysis == "CCW + QBA adjustment" & me
 cim <- function(m, tg, src = NA) ci_methods_maringe[method == m & scenario == tg & (is.na(src) & is.na(source) | source %in% src)]
 wo <- cim("Wald (robust SE)", "observed")
 wn <- cim("Wald (robust SE)", "null")
+bo <- cim("Confidence belt", "observed", "grid")
+bn <- cim("Confidence belt", "null", "grid")
 B <- po$B
 n_fail <- po$n_fail + pn$n_fail
 bias_ci <- function(p) paste0(f3(p$bias - 1.96 * p$bias_mcse_total), " to ", f3(p$bias + 1.96 * p$bias_mcse_total))
@@ -89,6 +92,7 @@ mins_all <- sum(meta$seconds, na.rm = TRUE) / 60
 | Type I error (target 5%) | **`r pct(pn$reject_0, 3)`** | `r pct(adj("Type I error")$value, 3)` |
 | Power at the observed effect | `r pct(po$reject_0)` | `r pct(adj("Power")$value)` |
 | Alternative: HR with simulation bootstrap-t 95% CI (Section 4.1) | | `r hr(cr$est_obs)` (`r ci(cr$ci_lo_boot_t, cr$ci_hi_boot_t)`) |
+| Alternative: HR with confidence-belt 95% CI (Section 4.2) | | `r hr(cr$est_obs)` (`r ci(cr$ci_lo_belt, cr$ci_hi_belt)`) |
 
 Monte Carlo SE: about 0.2–0.3 percentage points for coverage and type I error, 0.006 for the bias. Bold cells differ from the target by more than their Monte Carlo error. Adjusted performance is cross-fitted (corrections estimated on one half of the replays, checked on the other).
 
@@ -297,26 +301,48 @@ knitr::kable(table_results_maringe$performance,
 
 The symmetric widening cannot correct the lopsided misses. An asymmetric CI uses the replays directly: the 2.5% and 97.5% quantiles of $T = (\hat\psi - \psi)/\widehat{SE}$ over the replays with true HR = observed are `r f2(cr$t_q_lo)` and `r f2(cr$t_q_hi)` (instead of ±1.96), and the CI is $[\hat\psi - q_{97.5}\widehat{SE},\ \hat\psi - q_{2.5}\widehat{SE}]$. This is a parametric bootstrap-t (Efron & Tibshirani 1993, ch. 12): the model fitted to the data generates the replays, and the observed estimate plays the role of the truth. $T$ already contains the bias, so the CI is built around the unadjusted estimate.
 
-**Observed result:** HR `r hr(cr$est_obs)` (`r ci(cr$ci_lo_boot_t, cr$ci_hi_boot_t)`), against Wald `r ci(cr$ci_lo_obs, cr$ci_hi_obs)` and QBA widening `r ci(cr$ci_lo_corr, cr$ci_hi_corr)`.
+**Observed result:** HR `r hr(cr$est_obs)` (`r ci(cr$ci_lo_boot_t, cr$ci_hi_boot_t)`), against Wald `r ci(cr$ci_lo_obs, cr$ci_hi_obs)`, QBA widening `r ci(cr$ci_lo_corr, cr$ci_hi_corr)` and confidence belt `r ci(cr$ci_lo_belt, cr$ci_hi_belt)` (Section 4.2).
 
 **How to read the checks.** Both learned CIs are checked by cross-fitting (learned on half of the replays, checked on the other half). In the same scenario this is close to circular: the CI was tuned to exactly that distribution. The informative check is *transfer*: learn the CI at one true effect, check it at the other. It shows whether the CI still works when the true effect differs from the one used to build it, which is the situation of a real study.
 
 ```{r tab-ci}
-#| tbl-cap: "Coverage of three 95% CIs, % (MCSE), and the share of CIs lying entirely below or above the truth (2.5% each expected)."
+#| tbl-cap: "Coverage of the 95% CIs, % (MCSE), and the share of CIs lying entirely below or above the truth (2.5% each expected). Confidence belt: Section 4.2."
 knitr::kable(table_ci_methods_maringe,
              col.names = c("CI", "Checked at", "Learned from", "Coverage", "Below truth", "Above truth"),
              align = "lllrrr")
 ```
 
 ```{r fig-ci}
-#| fig-cap: "Coverage and one-sided misses of the Wald, QBA-widened and bootstrap-t CIs. Bars: 95% Monte Carlo interval. Dashed: nominal value."
+#| fig-cap: "Coverage and one-sided misses of the Wald, QBA-widened, bootstrap-t and confidence-belt CIs. Bars: 95% Monte Carlo interval. Dashed: nominal value."
 #| out-width: "100%"
 knitr::include_graphics(fig(grep("fig_ci_methods\\.png$", targets::tar_read(fig_ci_methods_maringe, store = store), value = TRUE)), error = FALSE)
 ```
 
 - **Transfer (the real check):** bootstrap-t `r pct(cim("Bootstrap-t", "null", "observed")$coverage)` at no effect and `r pct(cim("Bootstrap-t", "observed", "null")$coverage)` at the observed effect; QBA widening `r pct(cim("QBA widening", "null", "observed")$coverage)` and `r pct(cim("QBA widening", "observed", "null")$coverage)`; Wald `r pct(wn$coverage)` and `r pct(wo$coverage)`.
-- **Why not exactly 95%:** $T$ is not fully pivotal. Its quantiles shift with the true effect, so quantiles learned at one effect over-correct at the other (misses flip side in the transfer rows). Exact coverage at every effect would need test inversion over a grid of θ (a confidence belt).
+- **Why not exactly 95%:** $T$ is not fully pivotal. Its quantiles shift with the true effect, so quantiles learned at one effect over-correct at the other (misses flip side in the transfer rows). Section 4.2 removes this assumption.
 - **Validity** rests on the same assumption as the rest of the QBA: the simulated world (Weibull outcome model, fixed covariates and surgery dates) is close enough to the real one.
+
+## 4.2 Nominal CI: confidence belt {#belt}
+
+The bootstrap-t uses the quantiles of $T$ at one true effect. The confidence belt lets them depend on the true value (Neyman construction, test inversion):
+
+1. **Grid of true effects.** Besides θ\* and 0, the study is replayed at `r nrow(belt_maringe$quantiles) - 2` further values of θ (`r n0(max(belt_maringe$quantiles[!theta %in% c(cal$theta_star, 0), n]))` replays each, same seeds), each with its own true value $\psi(\theta)$ (`r cfg_belt_truth` large datasets).
+2. **Quantile curves.** At each grid point, the 2.5% and 97.5% quantiles of $T = (\hat\psi - \psi)/\widehat{SE}$; a weighted polynomial in $\psi$ (degree `r belt_maringe$degree`) smooths them across the grid (figure below).
+3. **Inversion.** The CI is every $\psi_0$ with $q_{2.5}(\psi_0) \le (\hat\psi - \psi_0)/\widehat{SE} \le q_{97.5}(\psi_0)$, i.e. every true value that a 5% test calibrated *at that value* would not reject.
+
+**Why nominal:** for any true value, the test calibrated at it rejects 5% of the time, so the set of non-rejected values contains the truth 95% of the time, whatever the true effect, without assuming $T$ is pivotal. What remains is Monte Carlo error in the quantiles, smoothing between grid points, and the adequacy of the simulated world.
+
+```{r fig-belt}
+#| fig-cap: "Quantiles of T across the grid of true effects (points) and the smoothed curves used for inversion. Dashed: ±1.96. Wald assumes flat lines at ±1.96, the bootstrap-t flat lines at the values for the observed effect."
+#| out-width: "70%"
+knitr::include_graphics(fig(grep("fig_belt\\.png$", targets::tar_read(fig_belt_maringe, store = store), value = TRUE)), error = FALSE)
+```
+
+**Check.** A CI covers $\psi_0$ exactly when the test at $\psi_0$ does not reject, so with the checked effect on the grid coverage would hold by construction. The check therefore drops that grid point and refits the curves (and cross-fits over replays), so the belt has to interpolate, as it would for an unknown true effect:
+
+- **Observed effect:** coverage `r pct(bo$coverage)` (MCSE `r pct(bo$mcse)`); `r pct(bo$miss_below)` of CIs entirely below the truth, `r pct(bo$miss_above)` above.
+- **No effect:** coverage `r pct(bn$coverage)` (MCSE `r pct(bn$mcse)`); `r pct(bn$miss_below)` below, `r pct(bn$miss_above)` above.
+- **Grid range:** `r pct(bo$share_outside, 0)` (observed) and `r pct(bn$share_outside, 0)` (no effect) of replay CIs have an endpoint beyond the simulated range, where the nearest quantile is used. This affects the far endpoint only, not whether the CI contains the truth.
 
 # 5. Alignment with the draft paper (version 0.62, 8 Oct) {#alignment}
 
@@ -416,6 +442,7 @@ $$W_i(t) = 1 \text{ for } t < g, \qquad W_i(t) = 1/\hat\pi(Z_i) \text{ for } t \
 - **Calibration:** $\theta^*$ solves $\tilde\psi(\theta) = \hat\psi_{\text{obs}}$ (secant search from $\hat\theta$, `r cfg$calibration$n_rep` large datasets per step, tolerance `r cfg$calibration$tol`).
 - **Performance** over $B = `r n0(B)`$ replicates: bias $= \bar{\hat\psi} - \psi$; coverage $= B^{-1}\sum_b I(|\hat\psi_b - \psi| \le 1.96\,\widehat{SE}_b)$; rejection rate $= B^{-1}\sum_b I(|\hat\psi_b| > 1.96\,\widehat{SE}_b)$. The MCSE of the bias includes the truth's MC error.
 - **Adjustment:** $\hat\psi^{adj} = \hat\psi - \widehat{\text{bias}}$; CI $\hat\psi^{adj} \pm 1.96\, k\, \widehat{SE}$ with $k = \max(1, SE_{emp}/SE_{mod})$; critical value $z^*$ = 95th percentile of $|z|$ under $\theta = 0$. Two-fold cross-fitting over replicate index for the adjusted performance.
+- **Confidence belt:** grid quantiles $q_a(\psi_j)$ of $(\hat\psi_b - \psi_j)/\widehat{SE}_b$ (type 8), smoothed by a weighted polynomial in $\psi$ (weights = replays; constant beyond the grid); CI $= \{\psi_0: q_{2.5}(\psi_0) \le (\hat\psi - \psi_0)/\widehat{SE} \le q_{97.5}(\psi_0)\}$ by bisection. Check: leave the checked grid point out, two-fold cross-fitting over replicate index.
 - **Bootstrap-t CI:** $[\hat\psi - q_{97.5}\widehat{SE},\ \hat\psi - q_{2.5}\widehat{SE}]$, $q_a$ = quantile of $(\hat\psi_b - \psi)/\widehat{SE}_b$ over the replicates at $\theta^*$ (type 8). Transfer check: quantiles learned at $\theta^*$ applied at $\theta = 0$ and vice versa.
 
 ```{r code-truth}

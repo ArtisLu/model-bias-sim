@@ -23,8 +23,10 @@ boot_t_ci <- function(estimate, se, q) {
 #' Correct the observed analysis using the observed-effect and null scenarios
 #' @param obs_result Observed pipeline result; @param performance From `summarise_performance()`.
 #' @param sim_results Replicate table; @param dataset Dataset key; @param level Nominal level.
+#' @param belt From `fit_belt()` (optional): adds the confidence-belt CI.
 #' @return One-row data.table on the log-HR scale.
-correct_estimate <- function(obs_result, performance, sim_results, dataset, level = 0.95) {
+correct_estimate <- function(obs_result, performance, sim_results, dataset, level = 0.95,
+                             belt = NULL) {
   z <- stats::qnorm(1 - (1 - level) / 2)
   po <- performance[scenario == "observed"]
   # Paper 2.7: truth = observed estimate, so subtracting the bias is the grid-search answer
@@ -40,6 +42,8 @@ correct_estimate <- function(obs_result, performance, sim_results, dataset, leve
   obs_sim <- sim_results[theta == po$theta]
   q <- boot_t_quantiles(obs_sim$estimate, obs_sim$se, po$truth, level)
   ci_t <- boot_t_ci(obs_result$estimate, obs_result$se, q)
+  ci_b <- if (is.null(belt)) list(lo = NA_real_, hi = NA_real_) else
+    belt_invert(obs_result$estimate, obs_result$se, belt$curve)
   data.table::data.table(
     dataset = dataset,
     est_obs = obs_result$estimate, ci_lo_obs = obs_result$ci_lo, ci_hi_obs = obs_result$ci_hi,
@@ -50,6 +54,7 @@ correct_estimate <- function(obs_result, performance, sim_results, dataset, leve
     ci_hi_corr = est_c + z * infl * obs_result$se,
     t_q_lo = q[["q_lo"]], t_q_hi = q[["q_hi"]],
     ci_lo_boot_t = ci_t$lo, ci_hi_boot_t = ci_t$hi,
+    ci_lo_belt = ci_b$lo, ci_hi_belt = ci_b$hi,
     # Critical value that gives a 5% rejection rate when treatment has no effect
     z_crit_calibrated = stats::quantile(z_null, level, names = FALSE),
     p_calibrated = mean(z_null >= z_obs)

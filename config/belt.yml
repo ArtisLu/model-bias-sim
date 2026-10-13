@@ -1,0 +1,29 @@
+# Confidence belt (test inversion over a grid of true effects). Kept apart from config.yml
+# on purpose: every target depends on cfg, so a key added there would rerun the replicates.
+# Profiles follow R_CONFIG_ACTIVE; a profile not listed here uses `default`.
+
+default:
+  B: 5000            # replicates per extra grid point (theta* and 0 reuse the main replicates)
+  truth_n_rep: 12    # large datasets per grid truth (truth MCSE ~0.007 log-HR)
+  degree: 2          # polynomial in psi for the quantile curves of T
+  datasets:
+    # Extra theta values; together with theta* and 0 they span the psi range where CI endpoints
+    # of the observed study and of the checked replicates fall
+    maringe:
+      theta_extra: [-3.4, -2.6, -2.0, -1.5, -1.1, -0.35, 0.45, 1.0, 1.6]
+    synpuf:
+      theta_extra: [-0.6, -0.1, 0.3, 1.0, 1.4, 1.9]
+
+smoke:
+  B: 20
+  truth_n_rep: 1
+  degree: 1
+  datasets:
+    maringe:
+      theta_extra: [-1.6, 0.8]
+    synpuf:
+      theta_extra: [0.2, 1.2]
+
+b100k:
+  B: 10000
+  truth_n_rep: 24

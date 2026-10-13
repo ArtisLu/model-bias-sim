@@ -186,12 +186,13 @@ evaluate_adjustment <- function(sim_results, truth_table, level = 0.95) {
   )
 }
 
-#' Coverage of three 95% CIs: Wald (robust SE), QBA symmetric widening, simulation bootstrap-t
+#' Coverage of 95% CIs: Wald (robust SE), QBA widening, bootstrap-t and (optional) confidence belt
 #' @param sim_results Replicates (one dataset, both scenarios).
-#' @param truth_table From `make_truth_table()`; @param level Nominal level.
+#' @param truth_table From `make_truth_table()`; @param belt From `fit_belt()` or NULL.
+#' @param level Nominal level.
 #' @return data.table: method, scenario (where coverage is checked), source (scenario the
 #'   CI was learned from), check, coverage, mcse, miss_below, miss_above, n.
-compare_ci_methods <- function(sim_results, truth_table, level = 0.95) {
+compare_ci_methods <- function(sim_results, truth_table, belt = NULL, level = 0.95) {
   z <- stats::qnorm(1 - (1 - level) / 2)
   d <- merge(sim_results[!is.na(estimate)], truth_table[, .(dataset, theta, scenario, truth)],
              by = c("dataset", "theta"))
@@ -233,8 +234,10 @@ compare_ci_methods <- function(sim_results, truth_table, level = 0.95) {
   })
   grid <- data.table::CJ(method = c("QBA widening", "Bootstrap-t"), src = c("observed", "null"),
                          tg = c("observed", "null"), sorted = FALSE)
-  rbind(data.table::rbindlist(wald),
-        data.table::rbindlist(Map(learned, grid$method, grid$src, grid$tg)))
+  out <- rbind(data.table::rbindlist(wald),
+               data.table::rbindlist(Map(learned, grid$method, grid$src, grid$tg)))
+  if (is.null(belt)) return(out)
+  rbind(out, belt_coverage(sim_results, truth_table, belt), fill = TRUE)
 }
 
 #' Table of CI coverage by method (estimate (MCSE), misses by side)
@@ -245,28 +248,31 @@ make_ci_table <- function(ci) {
   lab <- c(observed = "True HR = observed", null = "No effect")
   learned_from <- data.table::fifelse(
     is.na(ci$source), "Not learned",
-    paste0(lab[ci$source], data.table::fifelse(ci$check == "cross-fitted", " (cross-fitted)", " (transfer)"))
+    data.table::fifelse(
+      ci$source == "grid", "Grid without this effect (cross-fitted)",
+      paste0(lab[ci$source], data.table::fifelse(ci$check == "cross-fitted", " (cross-fitted)", " (transfer)"))
+    )
   )
   data.table::data.table(
     method = ci$method, checked_in = unname(lab[ci$scenario]), learned_from = learned_from,
     coverage = paste0(pc(ci$coverage), " (", pc(ci$mcse), ")"),
     below = pc(ci$miss_below), above = pc(ci$miss_above)
-  )[order(match(method, c("Wald (robust SE)", "QBA widening", "Bootstrap-t")), checked_in)]
+  )[order(match(method, names(ci_cols)), checked_in)]
 }
 
-ci_cols <- c("Wald (robust SE)" = "black", "QBA widening" = "red", "Bootstrap-t" = "#1f6fb4")
+ci_cols <- c("Wald (robust SE)" = "black", "QBA widening" = "red", "Bootstrap-t" = "#1f6fb4",
+             "Confidence belt" = "#2e8b57")
 
 #' Figure: coverage and one-sided misses of the three CIs (points +- 1.96 MCSE)
 #' @param ci From `compare_ci_methods()`.
 #' @return ggplot.
 plot_ci_methods <- function(ci) {
   d <- data.table::copy(ci)
-  d[, learned := factor(data.table::fifelse(check == "none", "Not learned",
-                                            data.table::fifelse(check == "transfer",
-                                                                "Other scenario (transfer)",
-                                                                "Same scenario (cross-fitted)")),
-                        levels = c("Not learned", "Same scenario (cross-fitted)",
-                                   "Other scenario (transfer)"))]
+  lv <- c("Not learned", "Same scenario (cross-fitted)", "Other scenario (transfer)",
+          "Grid without this effect (cross-fitted)")
+  d[, learned := factor(data.table::fcase(
+    check == "none", lv[1], source %in% "grid", lv[4], check == "transfer", lv[3], default = lv[2]
+  ), levels = lv)]
   d[, scenario := factor(scenario, c("observed", "null"),
                          c("Checked at true HR = observed", "Checked at no effect"))]
   long <- data.table::rbindlist(list(
@@ -277,7 +283,7 @@ plot_ci_methods <- function(ci) {
           mcse = sqrt(miss_below * (1 - miss_below) / n), ref = 0.025)]
   ))
   long[, measure := factor(measure, c("Coverage", "CI entirely above truth", "CI entirely below truth"))]
-  long[, method := factor(method, names(ci_cols))]
+  long[, method := factor(method, intersect(names(ci_cols), unique(method)))]
   refs <- unique(long[, .(measure, ref)])
   pd <- ggplot2::position_dodge(width = 0.6)
   ggplot2::ggplot(long, ggplot2::aes(method, 100 * value, colour = method, shape = learned)) +
@@ -288,8 +294,8 @@ plot_ci_methods <- function(ci) {
     ggplot2::geom_point(ggplot2::aes(group = learned), position = pd, size = 2.6) +
     ggplot2::facet_grid(measure ~ scenario, scales = "free_y") +
     ggplot2::scale_colour_manual(values = ci_cols, guide = "none") +
-    ggplot2::scale_shape_manual(values = c(16, 17, 15), name = "CI learned from:", drop = FALSE) +
-    ggplot2::scale_x_discrete(labels = c("Wald", "QBA\nwidening", "Bootstrap-t")) +
+    ggplot2::scale_shape_manual(values = c(16, 17, 15, 18), name = "CI learned from:") +
+    ggplot2::scale_x_discrete(labels = function(x) sub(" ", "\n", sub(" \\(robust SE\\)", "", x))) +
     ggplot2::labs(x = NULL, y = "% of replicates (95% Monte Carlo interval)") +
     theme_paper(base_size = 11) +
     ggplot2::theme(legend.position = "bottom")
@@ -303,8 +309,8 @@ save_ci_figure <- function(ci, dir) {
   p <- plot_ci_methods(ci)
   png <- file.path(dir, "fig_ci_methods.png")
   eps <- file.path(dir, "fig_ci_methods.eps")
-  ggplot2::ggsave(png, p, width = 10, height = 7.5, dpi = 600, bg = "white")
-  ggplot2::ggsave(eps, p, width = 10, height = 7.5, device = grDevices::cairo_ps)
+  ggplot2::ggsave(png, p, width = 11, height = 7.5, dpi = 600, bg = "white")
+  ggplot2::ggsave(eps, p, width = 11, height = 7.5, device = grDevices::cairo_ps)
   c(png, eps)
 }
 
