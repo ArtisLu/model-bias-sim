@@ -41,15 +41,18 @@ Sys.unsetenv("R_CONFIG_ACTIVE"); targets::tar_make()         # full run (B = 10,
 source("reports/paper/build_section4.R")                     # Word draft of paper Section 4
 ```
 
-**Run time and parallel runs.** The default run needs roughly 6–8 hours of computing time (estimated from
-a scaled-down run, about 0.04 s per CCW analysis of 200 patients): about 45 minutes for the 2 × 10,000
-simulated studies, the 2 × 10,000 independent check studies, the true values and the calibration, and the
-rest for the nested simulation (500 outer datasets at θ\* at ~35 s each, 500 with no effect at ~10 s each).
+**Run time and parallel runs.** Measured on a 4-core Windows laptop with 3 crew workers (22 Oct 2026):
+about 0.17 s per CCW analysis of 200 patients (0.4 s while all cores are busy). The default run takes
+about 10–11 hours elapsed, roughly 30 CPU-hours: inverse calibration 1 hour (sequential, 4 steps of 2,000
+studies), nested simulation about 27 CPU-hours (outer datasets at θ\* ~130 s each, with no effect ~65 s
+each), the 2 × 10,000 main and 2 × 10,000 check studies about 2 CPU-hours, true values well under 1.
 With `crew` installed, branches run on parallel local workers (default 2, `workers` in
-`config/config.yml`). To use more cores without editing the config, set
-`Sys.setenv(QBA_WORKERS = parallel::detectCores() - 1)` before `tar_make()`; with 8 workers the run takes
-about an hour. Results do not depend on the number of workers. The inverse calibration is sequential
-(a few minutes). Nested sizes are under `nested:` in `config/config.yml` (`outer`, `inner`).
+`config/config.yml`); `Sys.setenv(QBA_WORKERS = parallel::detectCores() - 1)` before `tar_make()` uses
+more cores without editing the config. Results do not depend on the number of workers.
+Do not edit `config/config.yml` during or between runs unless you want to rerun everything: every target
+depends on it. For the CCW and simple-adjustment results without waiting for the nested simulation:
+`targets::tar_make(names = c("adjustment_maringe", "validation_maringe"))`; a later full `tar_make()`
+keeps everything already built, including finished nested branches.
 
 **More replicates.** `B` (replicates per scenario) is in `config/config.yml`. For a precision check
 without touching the paper run, use the `b100k` profile (100,000 main and 100,000 check studies per
