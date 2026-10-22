@@ -92,7 +92,7 @@ invert_weibull_tv <- function(eta, rho, theta, s, u) {
 #' @param dgm Fitted DGM from `fit_dgm()`.
 #' @param theta Treatment log-HR used for simulation.
 #' @param u,u_cens Uniforms for event and censoring times, one per patient (CRN).
-#' @return Copy of `data` with simulated `time`, `status`, `cens_time`, `trt_time`.
+#' @return Copy of `data` with simulated `time`, `status`, `cens_time`, `trt_time`, `cens_event`.
 simulate_outcomes <- function(data, dgm, theta, u, u_cens = NULL) {
   checkmate::assert_numeric(u, len = nrow(data), lower = 0, upper = 1)
   X <- dgm_design(data, dgm$covariates)
@@ -110,5 +110,7 @@ simulate_outcomes <- function(data, dgm, theta, u, u_cens = NULL) {
   }
   out[, `:=`(time = pmin(t_ev, cens_time), status = as.integer(t_ev <= cens_time))]
   out[, trt_time := data.table::fifelse(s <= time, s, Inf)]
+  # Simulated loss to follow-up, so a refit of the censoring model (nested simulation) sees it
+  out[, cens_event := as.integer(status == 0L & time < admin_time)]
   out[]
 }

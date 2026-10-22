@@ -15,7 +15,7 @@ theme_qba <- function() {
     )
 }
 
-#' Distribution of replayed estimates in the observed-effect scenario, one panel per dataset
+#' Distribution of replayed estimates at the calibrated effect theta*, one panel per dataset
 #' @param sim_all Stacked replicates (with `dataset`); @param perf_all Stacked performance.
 #' @param labels Named character vector: dataset key -> display label.
 #' @return ggplot.
@@ -23,8 +23,8 @@ plot_estimates <- function(sim_all, perf_all, labels) {
   po <- perf_all[scenario == "observed"]
   d <- merge(sim_all[!is.na(estimate)], po[, .(dataset, theta)], by = c("dataset", "theta"))
   lines <- rbind(
-    po[, .(dataset, x = exp(truth), what = "True HR (= observed CCW estimate)")],
-    po[, .(dataset, x = exp(mean_est), what = "Average of simulated estimates")]
+    po[, .(dataset, x = exp(truth), what = "True CCW HR at theta*")],
+    po[, .(dataset, x = exp(mean_est), what = "Average of simulated estimates (= observed)")]
   )
   d[, panel := labels[dataset]]
   lines[, panel := labels[dataset]]
@@ -48,10 +48,10 @@ plot_comparison <- function(perf_all, labels) {
   po <- perf_all[scenario == "observed"]
   pn <- perf_all[scenario == "null"]
   d <- rbind(
-    po[, .(dataset, metric = "Bias (% of SE), true HR = observed",
+    po[, .(dataset, metric = "Bias (% of SE), calibrated effect",
            value = 100 * std_bias, lo = 100 * (bias - 1.96 * bias_mcse_total) / emp_se,
            hi = 100 * (bias + 1.96 * bias_mcse_total) / emp_se, ref = 0)],
-    po[, .(dataset, metric = "95% CI coverage (%), true HR = observed",
+    po[, .(dataset, metric = "95% CI coverage (%), calibrated effect",
            value = 100 * coverage, lo = 100 * (coverage - 1.96 * coverage_mcse),
            hi = 100 * (coverage + 1.96 * coverage_mcse), ref = 95)],
     pn[, .(dataset, metric = "Type I error (%), no effect",

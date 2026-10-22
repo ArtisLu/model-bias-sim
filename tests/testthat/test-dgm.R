@@ -42,3 +42,13 @@ test_that("adding u_cens leaves the event-time draws unchanged (appended, not re
   expect_identical(r$u_event, withr::with_seed(5, runif(10), .rng_kind = "L'Ecuyer-CMRG"))
   expect_length(r$u_cens, 10)
 })
+
+test_that("simulated data carry their own loss-to-follow-up indicator", {
+  spec_c <- list(model = "weibull", covariates = spec_s$censoring$covariates)
+  dgm <- fit_dgm(base_syn, spec_s$dgm, spec_c)
+  rng <- draw_replicate_rng(12, nrow(base_syn))
+  sim <- simulate_outcomes(base_syn, dgm, 0, rng$u_event, rng$u_cens)
+  expect_equal(sim$cens_event, as.integer(sim$status == 0L & sim$time < sim$admin_time))
+  expect_true(all(simulate_outcomes(base_test, fit_dgm(base_test, spec_m$dgm), 0,
+                                    draw_replicate_rng(1, nrow(base_test))$u_event)$cens_event == 0L))
+})

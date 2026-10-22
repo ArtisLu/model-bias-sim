@@ -1,5 +1,5 @@
-# True value psi(theta): the large-sample limit of the CCW estimator in the
-# simulated world (the "CCW model parameter"; ADEMP E1), and the calibration of theta*.
+# True value psi(theta): the large-sample limit of the CCW estimator in the simulated world
+# (ADEMP E1), and the inverse calibration of the generating value (paper Section 2.7.1).
 
 #' Stack K copies of the base data with unique ids
 #' @param data Base data; @param K Number of copies.
@@ -12,14 +12,16 @@ stack_copies <- function(data, K) {
 
 #' Large-sample truth at one theta
 #' @param dgm Fitted DGM; @param data Base data; @param theta Treatment log-HR in the DGM.
-#' @param pipeline Pipeline spec; @param cfg Full config (uses `truth`, `seed_truth`).
-#' @param n_rep Number of large datasets to average.
+#' @param pipeline Pipeline spec; @param cfg Full config.
+#' @param n_rep,n_target Large datasets to average and patients per dataset.
+#' @param seed Seed of the large datasets (CRN across theta).
 #' @return One-row data.table: theta, truth, truth_mcse, n_truth, n_rep.
-compute_truth <- function(dgm, data, theta, pipeline, cfg, n_rep = cfg$truth$n_rep) {
+compute_truth <- function(dgm, data, theta, pipeline, cfg, n_rep = cfg$truth$n_rep,
+                          n_target = cfg$truth$n_target, seed = cfg$seed_truth) {
   checkmate::assert_number(theta)
-  big <- stack_copies(data, ceiling(cfg$truth$n_target / nrow(data)))
-  # Same seeds at every theta (CRN), so psi(theta) is smooth for calibration
-  seeds <- make_crn_seeds(cfg$seed_truth, n_rep)
+  big <- stack_copies(data, ceiling(n_target / nrow(data)))
+  # Same seeds at every theta (CRN), so psi(theta) is smooth in theta
+  seeds <- make_crn_seeds(seed, n_rep)
   est <- vapply(seeds, function(sd) {
     rng <- draw_replicate_rng(sd, nrow(big))
     sim <- simulate_outcomes(big, dgm, theta, rng$u_event, rng$u_cens)
@@ -34,31 +36,86 @@ compute_truth <- function(dgm, data, theta, pipeline, cfg, n_rep = cfg$truth$n_r
   )
 }
 
-#' Find theta* whose CCW truth equals the observed CCW estimate (paper Step 3)
-#' @param dgm Fitted DGM; @param data Base data; @param obs_result Observed pipeline result.
-#' @param pipeline Pipeline spec; @param cfg Full config (uses `calibration`).
-#' @return List: theta_star, psi_star (search precision), path (search history).
-calibrate_theta <- function(dgm, data, obs_result, pipeline, cfg) {
-  cc <- cfg$calibration
-  psi <- function(th) compute_truth(dgm, data, th, pipeline, cfg, n_rep = cc$n_rep)$truth
-  target <- obs_result$estimate
-  # Secant search started at the fitted coefficient; psi is smooth and monotone under CRN
-  th <- c(dgm$theta_hat, dgm$theta_hat - 0.5)
-  ps <- vapply(th, psi, numeric(1))
-  for (i in seq_len(cc$max_iter)) {
-    if (abs(ps[length(ps)] - target) < cc$tol) break
-    n <- length(th)
-    slope <- (ps[n] - ps[n - 1]) / (th[n] - th[n - 1])
-    th_new <- th[n] + (target - ps[n]) / slope
-    th_new <- max(-cc$bound, min(cc$bound, th_new))
-    th <- c(th, th_new)
-    ps <- c(ps, psi(th_new))
+#' Pipeline estimates of simulated studies at one theta (failed fits are NA)
+#' @param data Base data; @param dgm Fitted DGM; @param theta Generating log-HR.
+#' @param seeds Replicate seeds; @param pipeline Pipeline spec.
+#' @return Numeric vector, one estimate per seed.
+replicate_estimates <- function(data, dgm, theta, seeds, pipeline) {
+  vapply(seeds, function(sd) {
+    rng <- draw_replicate_rng(sd, nrow(data))
+    sim <- simulate_outcomes(data, dgm, theta, rng$u_event, rng$u_cens)
+    # Only the point estimate is needed, which does not depend on the variance estimator
+    safely_run(run_pipeline, sim, pipeline, robust = FALSE)$estimate
+  }, numeric(1))
+}
+
+#' Inverse calibration: theta whose mean simulated estimate m(theta) equals a target (paper 2.7.1)
+#' @param dgm Fitted DGM; @param data Base data; @param target Estimate to reproduce.
+#' @param seeds Replicate seeds, reused at every theta (CRN makes m(theta) smooth and monotone).
+#' @param pipeline Pipeline spec; @param cc List with max_iter, tol, bound.
+#' @param start First theta (and a second one when `slope` is NULL).
+#' @param slope Expected dm/dtheta; if given, the second point is a Newton step from `start`.
+#' @return List: theta_cal, mean_est, mean_est_mcse, n_ok, estimates (at theta_cal), slope,
+#'   at_bound, n_eval, path.
+calibrate_mean <- function(dgm, data, target, seeds, pipeline, cc,
+                           start = c(dgm$theta_hat, dgm$theta_hat - 0.5), slope = NULL) {
+  checkmate::assert_number(target)
+  clamp <- function(x) max(-cc$bound, min(cc$bound, x))
+  evals <- list()
+  run_at <- function(th) {
+    est <- replicate_estimates(data, dgm, th, seeds, pipeline)
+    evals[[length(evals) + 1L]] <<- list(theta = th, m = mean(est, na.rm = TRUE), est = est)
   }
-  best <- which.min(abs(ps - target))
+  last_slope <- function() {
+    n <- length(evals)
+    s <- (evals[[n]]$m - evals[[n - 1L]]$m) / (evals[[n]]$theta - evals[[n - 1L]]$theta)
+    # A flat or undefined secant (failed fits, same theta) falls back to the prior slope
+    if (is.finite(s) && abs(s) > 1e-8) s else if (is.null(slope)) 1 else slope
+  }
+  if (is.null(slope)) {
+    for (th in start[1:2]) run_at(th)
+  } else {
+    run_at(start[1])
+    run_at(clamp(start[1] + (target - evals[[1]]$m) / slope))
+  }
+  for (i in seq_len(cc$max_iter)) {
+    n <- length(evals)
+    if (!is.finite(evals[[n]]$m) || abs(evals[[n]]$m - target) < cc$tol) break
+    th_new <- clamp(evals[[n]]$theta + (target - evals[[n]]$m) / last_slope())
+    if (abs(th_new - evals[[n]]$theta) < 1e-6) break
+    run_at(th_new)
+  }
+  path <- data.table::rbindlist(lapply(seq_along(evals), function(k) {
+    data.table::data.table(step = k, theta = evals[[k]]$theta, mean_est = evals[[k]]$m,
+                           n_ok = sum(!is.na(evals[[k]]$est)))
+  }))
+  if (!any(is.finite(path$mean_est))) {
+    cli::cli_abort("All simulated analyses failed in calibration.")
+  }
+  best <- which.min(abs(path$mean_est - target))
+  est <- evals[[best]]$est
   list(
-    theta_star = th[best],
-    psi_star = ps[best],
-    at_bound = abs(th[best]) >= cc$bound,
-    path = data.table::data.table(step = seq_along(th), theta = th, psi = ps)
+    theta_cal = path$theta[best],
+    mean_est = path$mean_est[best],
+    mean_est_mcse = stats::sd(est, na.rm = TRUE) / sqrt(sum(!is.na(est))),
+    n_ok = sum(!is.na(est)),
+    estimates = est,
+    slope = last_slope(),
+    at_bound = abs(path$theta[best]) >= cc$bound,
+    n_eval = nrow(path),
+    path = path
   )
+}
+
+#' Calibrate the observed analysis: m(theta) = observed estimate (paper Steps 2.3 and 2.7.1)
+#' @param dgm Fitted DGM; @param data Base data; @param obs_result Observed pipeline result.
+#' @param seeds CRN seeds of the main run (the first `cfg$calibration$B` are used).
+#' @param pipeline Pipeline spec; @param cfg Full config.
+#' @return `calibrate_mean()` result without the replicate estimates, plus target.
+calibrate_observed <- function(dgm, data, obs_result, seeds, pipeline, cfg) {
+  cc <- cfg$calibration
+  cal <- calibrate_mean(dgm, data, obs_result$estimate, seeds[seq_len(min(cc$B, length(seeds)))],
+                        pipeline, cc)
+  cal$estimates <- NULL
+  c(cal, list(target = obs_result$estimate, B = min(cc$B, length(seeds))))
 }

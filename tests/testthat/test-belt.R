@@ -33,4 +33,7 @@ test_that("belt coverage rows fit the CI comparison format", {
   cm <- compare_ci_methods(sim, tt, belt)
   expect_equal(nrow(cm[method == "Confidence belt"]), 2L)
   expect_true(all(cm[method == "Confidence belt", coverage] > 0.9))
+  ex <- extra_cis(data.table::data.table(estimate = -0.5, se = 0.3), sim, tt, belt)
+  expect_true(ex$ci_lo_boot_t < -0.5 && -0.5 < ex$ci_hi_boot_t)
+  expect_true(ex$ci_lo_belt < -0.5 && -0.5 < ex$ci_hi_belt)
 })

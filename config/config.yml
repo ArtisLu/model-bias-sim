@@ -1,6 +1,6 @@
 # Modelling-bias QBA simulation: all tunables live here (simulation_setup.md, Sec. 2).
 # Profiles: default = Maringe-only production run (paper); smoke = quick end-to-end check;
-# two_datasets = Maringe + SynPUF comparison (R_CONFIG_ACTIVE=two_datasets).
+# two_datasets = Maringe + SynPUF comparison (R_CONFIG_ACTIVE=two_datasets); b100k = precision run.
 # Do not add keys lightly: every target depends on the config object.
 
 default:
@@ -8,20 +8,31 @@ default:
   active_datasets: ["maringe"]
   seed_master: 20261002
   seed_truth: 20261003
+  seed_validation: 20261004  # independent studies that check the adjusted analysis
   workers: 2
-  B: 10000           # replicates per scenario; coverage MCSE ~0.2%, bias MCSE ~0.002 (ADEMP P)
+  B: 10000           # replicates per scenario; coverage MCSE ~0.2%, bias MCSE ~0.003 (ADEMP P)
+  B_validation: 10000  # independent replicates per scenario (paper 2.7.2 step 5c, 2.7.3 step 9)
   batch_size: 250
 
-  # Large-sample truth: pipeline limit on stacked copies of the base data (~50,000 patients)
+  # Large-sample truth psi(theta): pipeline limit on stacked copies of the base data
   truth:
     n_target: 50000    # patients per large dataset (~1.5 GB per worker)
     n_rep: 24          # independent large datasets averaged at theta* and 0
-  # Search for theta* such that the CCW truth equals the observed estimate (paper Step 3)
+  # Inverse calibration (paper 2.7.1): theta* such that the mean CCW estimate equals the observed
   calibration:
-    n_rep: 12          # truths during the search (common random numbers)
-    max_iter: 4
-    tol: 0.005         # log-HR
+    B: 2000            # simulated studies per search step (replicates 1..B of the main run, CRN)
+    max_iter: 6
+    tol: 0.002         # log-HR
     bound: 3           # |theta| cap
+  # Nested (double) simulation (paper 2.7.2): outer datasets = first `outer` validation replicates
+  nested:
+    outer: 500
+    inner: 250         # simulated studies per outer dataset and search step
+    batch_size: 5      # outer datasets per branch
+    max_iter: 2        # secant steps after the Newton step from theta*
+    tol: 0.02          # log-HR; the bias identity absorbs a small residual
+    truth_n_target: 25000
+    truth_n_rep: 2
 
   datasets:
     maringe:
@@ -67,15 +78,24 @@ smoke:
   active_datasets: ["maringe", "synpuf"]
   workers: 1
   B: 20
+  B_validation: 20
   batch_size: 10
   truth:
     n_target: 2000
     n_rep: 2
   calibration:
-    n_rep: 1
+    B: 10
     max_iter: 2
     tol: 0.05
     bound: 3
+  nested:
+    outer: 4
+    inner: 8
+    batch_size: 2
+    max_iter: 1
+    tol: 0.05
+    truth_n_target: 1000
+    truth_n_rep: 1
 
 two_datasets:
   active_datasets: ["maringe", "synpuf"]
@@ -84,7 +104,21 @@ two_datasets:
 # stays intact: Sys.setenv(R_CONFIG_ACTIVE = "b100k"); targets::tar_make(store = "_targets_b100k")
 b100k:
   B: 100000
-  batch_size: 1000     # 200 branches instead of 800; less overhead per branch
+  B_validation: 100000
+  batch_size: 1000     # fewer branches; less overhead per branch
   truth:
     n_target: 50000
-    n_rep: 96          # truth MCSE ~0.0024 (default 24: ~0.0048), so the bias MCSE shrinks too
+    n_rep: 96          # halves the truth MCSE of the default (24), so the bias MCSE shrinks too
+  calibration:
+    B: 10000
+    max_iter: 6
+    tol: 0.001
+    bound: 3
+  nested:
+    outer: 1000
+    inner: 500
+    batch_size: 5
+    max_iter: 2
+    tol: 0.02
+    truth_n_target: 50000
+    truth_n_rep: 2

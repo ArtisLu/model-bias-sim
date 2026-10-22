@@ -1,10 +1,13 @@
-# Confidence belt (test inversion over a grid of true effects). Kept apart from config.yml
-# on purpose: every target depends on cfg, so a key added there would rerun the replicates.
+# Optional CI comparison (not part of the paper's adjustment): simulation bootstrap-t and the
+# confidence belt (test inversion over a grid of true effects). Off by default since paper v0.64
+# specifies the non-parametric adjustment; set enabled: true to build them. Kept apart from
+# config.yml so that toggling them does not rerun the replicates.
 # Profiles follow R_CONFIG_ACTIVE; a profile not listed here uses `default`.
 
 default:
+  enabled: false
   B: 5000            # replicates per extra grid point (theta* and 0 reuse the main replicates)
-  truth_n_rep: 12    # large datasets per grid truth (truth MCSE ~0.007 log-HR)
+  truth_n_rep: 12    # large datasets per grid truth
   degree: 2          # polynomial in psi for the quantile curves of T
   datasets:
     # Extra theta values; together with theta* and 0 they span the psi range where CI endpoints
@@ -14,7 +17,9 @@ default:
     synpuf:
       theta_extra: [-0.6, -0.1, 0.3, 1.0, 1.4, 1.9]
 
+# Smoke run builds the optional targets too, so their code stays tested
 smoke:
+  enabled: true
   B: 20
   truth_n_rep: 1
   degree: 1
