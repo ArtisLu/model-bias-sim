@@ -52,9 +52,10 @@ extra_targets <- if (extras) {
                 belt_batch_id, cfg$datasets[[ds]]$pipeline, cfg$batch_size)[, dataset := ds],
       pattern = cross(belt_theta, belt_batch_id)
     ),
+    # Column names as strings: tar_map() renames every symbol that matches a target (truth)
     tar_target(belt, fit_belt(
       rbind(sim_results, belt_sims, fill = TRUE),
-      rbind(truth_table[, .(theta, truth)], belt_truth[, .(theta, truth)]), cfg_belt
+      rbind(truth_table[, c("theta", "truth")], belt_truth[, c("theta", "truth")]), cfg_belt
     )),
     tar_target(ci_extra_obs, extra_cis(obs_result, sim_results, truth_table, belt)),
     tar_target(ci_methods, compare_ci_methods(sim_results, truth_table, belt)),
