@@ -85,8 +85,11 @@ vb <- function(r) {
 B <- po$B
 n_fail <- po$n_fail + pn$n_fail
 n_surv <- sum(bd$status == 0)
-meta <- targets::tar_meta(fields = c(name, type, time, seconds), targets_only = TRUE, store = store)
-meta <- meta[meta$type %in% c("stem", "branch"), ]
+# Run-time helpers (current_meta(), observed_workers())
+source(file.path(root, "R", "utils.R"), local = TRUE)
+meta <- targets::tar_meta(fields = c(name, type, time, seconds, children), targets_only = TRUE,
+                          store = store)
+meta <- current_meta(meta)
 mins_all <- sum(meta$seconds, na.rm = TRUE) / 60
 ```
 
@@ -97,11 +100,23 @@ mins_all <- sum(meta$seconds, na.rm = TRUE) / 60
 bias_sig <- off(cc("Bias (log HR)"))
 cov_sig <- off(cc("95% CI coverage"))
 t1_sig <- off(cc("Type I error"))
-simple_ok <- !off(sa("95% CI coverage")) && !off(sa("Type I error"))
-nested_ok <- !off(na("95% CI coverage")) && !off(na("Type I error"))
+# A learned rule's two 2.5% limits come from n studies, so its true error rate itself varies by
+# about this SD around the target; the table MCSE treats the learned rule as fixed
+lim_sd <- function(n) sqrt(2 * 0.025 * 0.975 / n)
+z_tot <- function(r, n) (r$value - r$ref) / sqrt(r$mcse^2 + lim_sd(n)^2)
+judge <- function(r, n, d = 1) {
+  if (!off(r)) return(paste0(pct(r$value, d), ", consistent with ", pct(r$ref, 0)))
+  side <- if (r$value > r$ref) "above" else "below"
+  if (abs(z_tot(r, n)) <= 1.96) {
+    paste0(pct(r$value, d), ", slightly ", side, " ", pct(r$ref, 0),
+           " but within the Monte Carlo error of the learned limits (Section 4)")
+  } else {
+    paste0(pct(r$value, d), ", ", side, " ", pct(r$ref, 0))
+  }
+}
 ```
 
-The CCW analysis of the Maringe example was replayed `r n0(B)` times on the original `r nrow(bd)` patients with the generating effect calibrated so that the **average** CCW estimate equals the observed one (paper Section 2.7.1), and `r n0(B)` times with no surgery effect. **Bias:** `r if (bias_sig) "small but detectable" else "not detectable"`. **95% CI coverage:** `r if (cov_sig) "below nominal" else "consistent with 95%"`. **Type I error:** `r if (t1_sig) "inflated" else "consistent with 5%"`. The non-parametric QBA adjustment `r if (simple_ok) "restores" else "does not fully restore"` nominal coverage and type I error in an independent set of `r n0(sa("95% CI coverage")$n)` studies per scenario; the nested simulation, which re-estimates the whole adjustment in each of `r ns$n_outer` outer datasets, `r if (nested_ok) "gives results consistent with nominal" else "departs from nominal"` (its Monte Carlo error is larger, Section 5).
+The CCW analysis of the Maringe example was replayed `r n0(B)` times on the original `r nrow(bd)` patients with the generating effect calibrated so that the **average** CCW estimate equals the observed one (paper Section 2.7.1), and `r n0(B)` times with no surgery effect. **Bias:** `r if (bias_sig) "small but detectable" else "not detectable"`. **95% CI coverage:** `r if (cov_sig) "below nominal" else "consistent with 95%"`. **Type I error:** `r if (t1_sig) "inflated" else "consistent with 5%"`. After the non-parametric QBA adjustment, checked in an independent set of `r n0(sa("95% CI coverage")$n)` studies per scenario, the bias is `r f3(sa("Bias (log HR)")$value)`, CI coverage `r judge(sa("95% CI coverage"), B)`, and type I error `r judge(sa("Type I error"), B, 2)`. The nested simulation, which re-estimates the whole adjustment in each of `r ns$n_outer` outer datasets, gives coverage `r judge(na("95% CI coverage"), Inf)` and type I error `r judge(na("Type I error"), Inf, 2)` (Monte Carlo error about 1 percentage point, Section 5).
 
 | | CCW as published | Simple adjustment | Nested simulation |
 |---|---|---|---|
@@ -234,7 +249,6 @@ knitr::kable(rt[, .(
 ```{r runtime-wall}
 rs <- targets::tar_read(run_settings, store = store)
 # Workers actually used, counted from the timestamps of the simulation branches
-source(file.path(root, "R", "utils.R"), local = TRUE)
 rs$workers <- observed_workers(mt)
 heavy <- mt[grepl("^(calibration|truth|sim_results|val_results|nested_obs|nested_null)_maringe", name)]
 # Elapsed time of the simulation stages, from the first start to the last finish
@@ -297,7 +311,7 @@ knitr::kable(table_results_maringe$analysis, col.names = c("", "Value"), align =
 - **CI, non-parametric** (2.7.2, 5a): the studies at θ\* are centred at their mean; the 2.5% and 97.5% quantiles of these errors (`r f3(adj$q_lo)` and `r f3(adj$q_hi)`) are added to the adjusted estimate. Parametric alternative: adjusted estimate ± 1.96 × `r f2(adj$se_inflation)` × robust SE.
 - **Test, non-parametric** (2.7.3, 7): the no-effect estimates are centred at their mean (`r f3(adj$null_mean)`); H0 is rejected if the observed estimate minus that mean falls below the 2.5% or above the 97.5% quantile, i.e. if the CCW HR is below `r hr(adj$null_mean + adj$null_q_lo)` or above `r hr(adj$null_mean + adj$null_q_hi)`. Simulation-calibrated p-value: twice the smaller tail share, `r f3(adj$p_np)` (observed `r f3(adj$p_obs)`). Parametric alternative: centred |z| with critical value `r f2(adj$z_crit_par)`, p = `r f3(adj$p_par)`.
 
-**Does it work?** The adjustment learned from the `r n0(B)` studies above was applied unchanged to `r n0(n_val)` *independent* studies per scenario (own seed stream; paper 2.7.2 step 5c and 2.7.3 step 9):
+**Does it work?** The adjustment learned from the `r n0(B)` studies above was applied unchanged to `r n0(n_val)` *independent* studies per scenario (own seed stream; paper 2.7.2 step 5c and 2.7.3 step 9). The MCSEs below treat the learned CI and rejection limits as fixed, i.e. they describe the rule as it would be applied to the study. The limits themselves were estimated from `r n0(B)` studies, so the true error rate of any such learned rule varies by about ±`r pct(lim_sd(B), 2)` (SD) around its target. Including this, the simple adjustment deviates from nominal by z = `r f2(z_tot(sa("95% CI coverage"), B))` for coverage and z = `r f2(z_tot(sa("Type I error"), B))` for type I error; more no-effect studies would narrow the latter.
 
 ```{r tab-perf}
 #| tbl-cap: "Performance of the CCW analysis, the simple adjustment (independent studies) and the nested simulation (estimate (MCSE))."
@@ -317,7 +331,7 @@ r_np <- P("Simple adjustment", "Non-parametric", "95% CI coverage")
 r_rf <- P("Simple adjustment", "Non-parametric (reflected)", "95% CI coverage")
 ```
 
-**Form of the non-parametric CI.** The paper adds the error quantiles to the estimate, [ψ̃ + q~2.5~, ψ̃ + q~97.5~]. If the error distribution is skewed, the interval that inverts it exactly is the reflected one, [ψ̃ − q~97.5~, ψ̃ − q~2.5~]. Here the two give `r pct(r_np$value)` and `r pct(r_rf$value)` coverage (MCSE `r pct(r_np$mcse)`), so the choice `r if (abs(r_np$value - r_rf$value) > 1.96 * r_np$mcse) "matters" else "does not matter"` for this example (quantiles `r f3(adj$q_lo)` and `r f3(adj$q_hi)`):
+**Form of the non-parametric CI.** The paper adds the error quantiles to the estimate, [ψ̃ + q~2.5~, ψ̃ + q~97.5~]. If the error distribution is skewed, the interval that inverts it exactly is the reflected one, [ψ̃ − q~97.5~, ψ̃ − q~2.5~]. Here the centred errors are `r if (adj$q_hi > -adj$q_lo) "right" else "left"`-skewed (quantiles `r f3(adj$q_lo)` and `r f3(adj$q_hi)`). Overall coverage is `r pct(r_np$value)` for the paper's form and `r pct(r_rf$value)` for the reflected form (MCSE `r pct(r_np$mcse)`). The share of CIs entirely below / above the true value is `r pct(P("Simple adjustment", "Non-parametric", "CI entirely below truth")$value)` / `r pct(P("Simple adjustment", "Non-parametric", "CI entirely above truth")$value)` for the paper's form; the reflected form misses `r pct(P("Simple adjustment", "Non-parametric (reflected)", "CI entirely below truth")$value)` below and `r pct(P("Simple adjustment", "Non-parametric (reflected)", "CI entirely above truth")$value)` above (2.5% each expected):
 
 ```{r tab-ci-variants}
 #| tbl-cap: "Coverage of the CI variants, % (MCSE), and the share of CIs entirely below or above the true value (2.5% each expected)."

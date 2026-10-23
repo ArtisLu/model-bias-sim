@@ -48,13 +48,18 @@ sa <- function(m) P("Simple adjustment", "Non-parametric", m)
 na <- function(m) P("Nested adjustment", "Non-parametric", m)
 mc_ci <- function(v, mc) paste0(f3(v - 1.96 * mc), " to ", f3(v + 1.96 * mc))
 off <- function(r) abs(r$value - r$ref) > 1.96 * r$mcse
+lim_sd <- function(n) sqrt(2 * 0.025 * 0.975 / n)
+z_tot <- function(r, n) (r$value - r$ref) / sqrt(r$mcse^2 + lim_sd(n)^2)
 B <- po$B
 n_val <- sa("95% CI coverage")$n
 n_fail <- po$n_fail + pn$n_fail
 n_trt <- sum(is.finite(bd$trt_time))
 # Patterns repeat the time of their branches, so only stems and branches are summed
-meta <- targets::tar_meta(fields = c(name, type, time, seconds), targets_only = TRUE, store = store)
-meta <- meta[meta$type %in% c("stem", "branch"), ]
+source("R/utils.R", local = TRUE)
+# Only the current pipeline: the store also keeps branch records of earlier runs
+meta <- targets::tar_meta(fields = c(name, type, time, seconds, children), targets_only = TRUE,
+                          store = store)
+meta <- current_meta(meta)
 secs_of <- function(prefix) sum(meta[grepl(paste0("^", prefix, "_", ds, "_"), meta$name), ]$seconds, na.rm = TRUE)
 secs_sim <- secs_of("sim_results")
 secs_nested <- secs_of("nested_obs") + secs_of("nested_null")
@@ -63,9 +68,9 @@ heavy <- meta[grepl(paste0("^(calibration|truth|sim_results|val_results|nested_o
 mins_wall <- as.numeric(difftime(max(heavy$time), min(heavy$time - heavy$seconds), units = "mins"))
 rs <- targets::tar_read(run_settings, store = store)
 # Workers actually used, counted from the timestamps of the simulation branches
-source("R/utils.R", local = TRUE)
 rs$workers <- observed_workers(meta)
-r_ver <- paste(R.version$major, R.version$minor, sep = ".")
+# R version of the run itself (session target), not of the session building this draft
+r_ver <- sub("^R version ([0-9.]+).*", "\\1", targets::tar_read(session, store = store)$platform$version)
 n_surg_day1 <- sum(bd$trt_time <= 1)
 n_big <- function(n_target) n0(ceiling(n_target / nrow(bd)) * nrow(bd))
 
@@ -300,7 +305,14 @@ doc <- txt(doc, paste0(
   "In ", n0(n_val), " independent datasets per scenario, the adjusted analysis had a bias of ",
   f3(sa("Bias (log HR)")$value), " (MCSE ", f3(sa("Bias (log HR)")$mcse), "), 95% CI coverage of ",
   pc(sa("95% CI coverage")$value), " (MCSE ", pc(sa("95% CI coverage")$mcse), ") and a type I error ",
-  "rate of ", pc(sa("Type I error")$value, 3), " (MCSE ", pc(sa("Type I error")$mcse, 3), ") (Table 3, Figure 4)."
+  "rate of ", pc(sa("Type I error")$value, 3), " (MCSE ", pc(sa("Type I error")$mcse, 3), ")",
+  # A learned rule's two 2.5% limits come from B studies, so its true rate varies by lim_sd
+  if (off(sa("Type I error")) && abs(z_tot(sa("Type I error"), B)) <= 1.96) {
+    paste0(", a deviation from 5% within the Monte Carlo error of the rejection limits themselves, ",
+           "which were estimated from ", n0(B), " no-effect datasets (SD of the implied rejection ",
+           "rate ", pc(lim_sd(B), 2), "; z = ", f2(z_tot(sa("Type I error"), B)), ")")
+  } else "",
+  " (Table 3, Figure 4)."
 ))
 doc <- txt(doc, paste0(
   "Nested simulation. The calibrated generating value varied across the ", ns$n_outer_ok, " outer datasets ",
