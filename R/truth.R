@@ -78,6 +78,9 @@ calib_start <- function(dgm, min_gap = 0.25) {
 #' @param cc `cfg$calibration` (tol, bound).
 #' @return Scalar theta: the best point so far once within tol, else a secant step.
 calib_next <- function(rows, target, cc) {
+  checkmate::assert_number(target, finite = TRUE)
+  checkmate::assert_number(cc$tol, lower = 0)
+  checkmate::assert_number(cc$bound, lower = 0)
   ps <- summarise_truth(rows)
   ps[, gap := truth - target]
   best <- ps[which.min(abs(gap))]

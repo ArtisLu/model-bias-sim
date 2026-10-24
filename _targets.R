@@ -56,7 +56,9 @@ per_dataset <- tar_map(
                 cfg$datasets[[ds]]$pipeline, cfg),
     pattern = cross(calib_theta_1, calib_seed_id)
   ),
-  tar_target(calib_theta_2, calib_next(calib_rows_1, obs_result$estimate, cfg$calibration)),
+  # cfg[["calibration"]], not cfg$calibration: tar_map() renames the symbol `calibration` to this
+  # dataset's calibration target (cf. [["dgm"]] above), which would pass NULL
+  tar_target(calib_theta_2, calib_next(calib_rows_1, obs_result$estimate, cfg[["calibration"]])),
   tar_target(
     calib_rows_2,
     truth_point(dgm, base_data, calib_theta_2, calib_seed_id, truth_seeds,
@@ -64,7 +66,7 @@ per_dataset <- tar_map(
     pattern = map(calib_seed_id)
   ),
   tar_target(calib_theta_3, calib_next(rbind(calib_rows_1, calib_rows_2), obs_result$estimate,
-                                       cfg$calibration)),
+                                       cfg[["calibration"]])),
   tar_target(
     calib_rows_3,
     truth_point(dgm, base_data, calib_theta_3, calib_seed_id, truth_seeds,
