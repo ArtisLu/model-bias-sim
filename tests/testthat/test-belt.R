@@ -75,3 +75,11 @@ test_that("belt coverage rows fit the CI comparison format", {
   expect_equal(nrow(cm[method == "Confidence belt"]), 2L)
   expect_true(all(cm[method == "Confidence belt", coverage] > 0.9))
 })
+
+test_that("belt truths stack the main scenarios and the nodes", {
+  tt <- data.table::data.table(theta = c(-0.7, 0), truth = c(-0.5, 0), scenario = c("observed", "null"))
+  bt <- data.table::data.table(theta = c(-2, -0.2, 1.5), truth = c(-1.4, -0.15, 1), n_rep = 12L)
+  out <- belt_truths(tt, bt)
+  expect_named(out, c("theta", "truth"))
+  expect_equal(out$truth, c(-0.5, 0, -1.4, -0.15, 1))
+})

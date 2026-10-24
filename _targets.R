@@ -127,9 +127,10 @@ per_dataset <- tar_map(
                    cfg$datasets[[ds]]$pipeline, cfg$batch_size),
     pattern = cross(belt_theta, belt_topup_id)
   ),
+  # Column selections stay inside functions: tar_map() would rename `truth` to the truth target
   tar_target(belt, fit_belt(
     rbind(sim_results, belt_sims_1, belt_sims_2, fill = TRUE),
-    rbind(truth_table[, .(theta, truth)], belt_truth[, .(theta, truth)]), cfg_belt
+    belt_truths(truth_table, belt_truth), cfg_belt
   )),
   tar_target(correction, correct_estimate(obs_result, performance, sim_results, ds, belt = belt)),
 

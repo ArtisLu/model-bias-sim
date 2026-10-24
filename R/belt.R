@@ -140,6 +140,13 @@ belt_invert <- function(estimate, se, curve) {
   list(lo = lo, hi = hi, outside = lo < curve$range[1] | hi > curve$range[2])
 }
 
+#' True values at all belt grid points (main scenarios and extra nodes)
+#' @param truth_table From `make_truth_table()`; @param belt_truth From `summarise_truth()`.
+#' @return data.table: theta, truth.
+belt_truths <- function(truth_table, belt_truth) {
+  rbind(truth_table[, .(theta, truth)], belt_truth[, .(theta, truth)])
+}
+
 #' Build the belt: grid quantiles and curves, on all replicates and per cross-fitting fold
 #' @param sims Replicates at theta*, 0 and the extra grid; @param truths data.table theta, truth.
 #' @param cfg_belt Belt config; @param level Nominal level.
