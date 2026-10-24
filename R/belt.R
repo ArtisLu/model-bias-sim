@@ -1,25 +1,102 @@
 # Confidence belt: CIs by inverting a test over a grid of true effects (Neyman construction).
-# Unlike the bootstrap-t, the quantiles of T may change with the true effect.
+# Unlike the bootstrap-t, the quantiles of T may change with the true effect. The grid is placed
+# where CI endpoints fall (Chebyshev-Lobatto nodes in psi), and replicates per grid point are
+# added only until the quantiles reach a target MCSE.
 
-#' Extra theta values for the belt (theta* and 0 are already simulated)
-#' @param theta_extra Configured grid; @param theta_sim Main scenarios; @param min_gap Merge distance.
-#' @return Sorted numeric vector.
-belt_theta_grid <- function(theta_extra, theta_sim, min_gap = 0.05) {
-  th <- sort(unlist(theta_extra))
-  th[vapply(th, function(x) all(abs(x - theta_sim) > min_gap), logical(1))]
+#' Range of psi the belt must cover: where CI endpoints of the observed study and of the
+#' checked replicates fall
+#' @param obs_result Observed pipeline result; @param sim_results Main replicates (Wald CIs).
+#' @param tail Share of replicate endpoints allowed beyond the range, per side.
+#' @param expand Widening of the range on each side, as a share of its width.
+#' @return c(lo, hi).
+belt_psi_range <- function(obs_result, sim_results, tail, expand) {
+  d <- sim_results[is.finite(ci_lo) & is.finite(ci_hi)]
+  # Wald endpoints locate the belt endpoints closely; `expand` absorbs the difference
+  lo <- min(obs_result$ci_lo, stats::quantile(d$ci_lo, tail, names = FALSE))
+  hi <- max(obs_result$ci_hi, stats::quantile(d$ci_hi, 1 - tail, names = FALSE))
+  c(lo, hi) + c(-1, 1) * expand * (hi - lo)
+}
+
+#' Chebyshev-Lobatto nodes on an interval (endpoints included)
+#' @param range c(lo, hi); @param k Number of nodes (>= 2).
+#' @return Increasing numeric vector.
+cheb_lobatto <- function(range, k) {
+  checkmate::assert_int(k, lower = 2)
+  # Denser near the ends, where a polynomial fit is least stable
+  mean(range) - diff(range) / 2 * cos(pi * (0:(k - 1)) / (k - 1))
+}
+
+#' Theta values of the extra belt grid points
+#' @param range From `belt_psi_range()`; @param truth_table Main-scenario truths.
+#' @param psi_pts Large-dataset rows from `truth_point()` (calibration and main truths).
+#' @param cfg_belt Belt config (n_nodes, min_gap, bound).
+#' @return Sorted theta values, excluding nodes the main scenarios already cover.
+belt_theta_plan <- function(range, truth_table, psi_pts, cfg_belt) {
+  nodes <- cheb_lobatto(range, cfg_belt$n_nodes)
+  # The main scenarios (10,000 replicates each) stand in for nodes close to them
+  keep <- vapply(nodes, function(x) all(abs(x - truth_table$truth) > cfg_belt$min_gap),
+                 logical(1))
+  pts <- summarise_truth(psi_pts)[, .(theta, psi = truth)]
+  th <- unique(round(psi_to_theta(nodes[keep], pts, cfg_belt$bound), 6))
+  sort(th[vapply(th, function(x) all(abs(x - truth_table$theta) > 1e-6), logical(1))])
+}
+
+#' Monte Carlo SE of a sample quantile (distribution-free, from order statistics)
+#' @param x Sample; @param p Probability.
+#' @return Scalar.
+quantile_mcse <- function(x, p) {
+  x <- sort(x[is.finite(x)])
+  n <- length(x)
+  z <- stats::qnorm(0.975)
+  h <- z * sqrt(n * p * (1 - p))
+  j <- pmin(n, pmax(1, round(n * p + c(-h, h))))
+  (x[j[2]] - x[j[1]]) / (2 * z)
 }
 
 #' Quantiles of T = (estimate - truth) / se at each grid point
 #' @param d Replicates with columns theta, rep, estimate, se, truth.
 #' @param level Nominal level.
-#' @return data.table: theta, psi, n, q_lo, q_hi.
+#' @return data.table: theta, psi, n, q_lo, q_hi, q_lo_mcse, q_hi_mcse.
 belt_quantiles <- function(d, level) {
   a <- (1 - level) / 2
   d[, .(
     n = .N,
     q_lo = stats::quantile((estimate - truth) / se, a, names = FALSE, type = 8),
-    q_hi = stats::quantile((estimate - truth) / se, 1 - a, names = FALSE, type = 8)
+    q_hi = stats::quantile((estimate - truth) / se, 1 - a, names = FALSE, type = 8),
+    q_lo_mcse = quantile_mcse((estimate - truth) / se, a),
+    q_hi_mcse = quantile_mcse((estimate - truth) / se, 1 - a)
   ), by = .(theta, psi = truth)][order(psi)]
+}
+
+#' Replicates needed per grid point for the target quantile MCSE (adaptive B)
+#' @param sims First-stage belt replicates; @param truths data.table theta, truth.
+#' @param cfg_belt Belt config (B_start, B_max, target_mcse).
+#' @param batch_size Replicates per batch.
+#' @param level Nominal level.
+#' @return data.table: theta, n, mcse, n_batches (total batches to run at that theta).
+belt_topup_plan <- function(sims, truths, cfg_belt, batch_size, level = 0.95) {
+  d <- merge(sims[!is.na(estimate) & se > 0, .(theta, rep, estimate, se)],
+             truths[, .(theta, truth)], by = "theta")
+  q <- belt_quantiles(d, level)
+  q[, mcse := pmax(q_lo_mcse, q_hi_mcse)]
+  # MCSE of a quantile falls as 1 / sqrt(n)
+  q[, n_req := ceiling(n * (mcse / cfg_belt$target_mcse)^2)]
+  q[, n_req := pmin(cfg_belt$B_max, pmax(cfg_belt$B_start, n_req))]
+  q[, .(theta, n, mcse, n_batches = as.integer(ceiling(n_req / batch_size)))]
+}
+
+#' Run one top-up batch at one grid point, or nothing if the plan does not need it
+#' @param data,dgm,theta,seeds,pipeline,batch_size As in `run_batch()`.
+#' @param batch_id Batch index (continues after the first stage).
+#' @param plan From `belt_topup_plan()`.
+#' @return Replicate rows (possibly none).
+run_belt_topup <- function(data, dgm, theta, seeds, batch_id, plan, pipeline, batch_size) {
+  need <- plan$n_batches[abs(plan$theta - theta) < 1e-10]
+  if (!length(need) || batch_id > need) {
+    return(data.table::data.table(theta = numeric(), rep = integer(), estimate = numeric(),
+                                  se = numeric()))
+  }
+  run_batch(data, dgm, theta, seeds, batch_id, pipeline, batch_size)
 }
 
 #' Smooth quantile curves q(psi): weighted polynomial, constant beyond the grid

@@ -40,8 +40,9 @@ source("reports/paper/build_section4.R")                     # Word draft of pap
 **Parallel runs.** With `crew` installed, the replicates and the true values run on parallel local
 workers (default 2, `workers` in `config/config.yml`). To use more cores without editing the config,
 set `Sys.setenv(QBA_WORKERS = parallel::detectCores() - 1)` before `tar_make()`. Results do not depend
-on the number of workers. The calibration search is sequential, so it takes about 7.5 minutes whatever
-the number of workers.
+on the number of workers. Each large dataset behind a true value is its own branch, so calibration
+steps, true values and confidence-belt truths also spread over the workers; only the 2–4 calibration
+steps follow each other. Large datasets need ~1.5 GB each, so the number of workers is limited by memory.
 
 **More replicates.** `B` (replicates per scenario) is in `config/config.yml`. For a precision check
 without touching the paper run, use the `b100k` profile (100,000 per scenario and 96 instead of 24 large

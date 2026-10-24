@@ -32,7 +32,7 @@ store <- if (nzchar(params$store)) params$store else file.path(root, "_targets")
 targets::tar_load(c(
   performance_maringe, correction_maringe, calibration_maringe, dgm_maringe, obs_result_maringe,
   base_data_maringe, sim_results_maringe, truth_table_maringe, perf_adjusted_maringe, ci_methods_maringe, table_ci_methods_maringe, belt_maringe,
-  table_baseline_maringe, table_results_maringe, performance_rsimsum_maringe, session
+  belt_plan_maringe, table_baseline_maringe, table_results_maringe, performance_rsimsum_maringe, session
 ), store = store)
 # Figure targets store paths relative to the project root
 fig <- function(path) file.path(root, path)
@@ -55,7 +55,8 @@ pct <- function(x, d = 1) paste0(formatC(100 * x, format = "f", digits = d), "%"
 hr <- function(x) formatC(exp(x), format = "f", digits = 4)
 ci <- function(lo, hi) paste0(hr(lo), "–", hr(hi))
 cfg <- config::get(file = file.path(root, "config", "config.yml"))
-cfg_belt_truth <- config::get(file = file.path(root, "config", "belt.yml"))$truth_n_rep
+cfg_belt_b <- config::get(file = file.path(root, "config", "belt.yml"))
+cfg_belt_truth <- cfg_belt_b$truth_n_rep
 spec <- cfg$datasets$maringe
 po <- performance_maringe[scenario == "observed"]
 pn <- performance_maringe[scenario == "null"]
@@ -176,21 +177,30 @@ Before weighting, `r sum(abs(bu$smd) > 10)` of `r nrow(bu)` covariate terms diff
 #| tbl-cap: "Computing time of the full pipeline by stage (sum over targets, all workers)."
 mt <- data.table(meta)
 mt[, stage := fcase(
-  grepl("^calibration_maringe$", name), "Calibration of θ* (paper Step 3)",
-  grepl("^truth_maringe_", name), "True values ψ(θ*) and ψ(0)",
+  grepl("^(calibration_maringe$|calib_rows_[0-9]_maringe_)", name), "Calibration of θ* (paper Step 3)",
+  grepl("^truth_rows_maringe_", name), "True values ψ(θ*) and ψ(0)",
   grepl("^sim_results_maringe_", name), "Simulated studies (paper Steps 3–5)",
+  grepl("^belt_truth_rows_maringe_", name), "Confidence belt: true values at the grid nodes",
+  grepl("^belt_sims_[0-9]_maringe_", name), "Confidence belt: simulated studies at the grid nodes",
   default = "Data, model fits, summaries, tables, figures, report"
 )]
-n_large_cal <- nrow(cal$path) * cfg$calibration$n_rep
+# Large datasets actually computed: calibration evaluations are reused for the truths (CRN)
+n_large_cal <- nrow(cal$evals)
+n_reused <- nrow(merge(cal$evals, data.table(theta = c(cal$theta_star, 0)), by = "theta"))
 units <- c(
   "Calibration of θ* (paper Step 3)" = n_large_cal,
-  "True values ψ(θ*) and ψ(0)" = 2 * cfg$truth$n_rep,
-  "Simulated studies (paper Steps 3–5)" = 2 * B
+  "True values ψ(θ*) and ψ(0)" = 2 * cfg$truth$n_rep - n_reused,
+  "Simulated studies (paper Steps 3–5)" = 2 * B,
+  "Confidence belt: true values at the grid nodes" = nrow(belt_plan_maringe) * cfg_belt_truth,
+  "Confidence belt: simulated studies at the grid nodes" =
+    sum(belt_maringe$quantiles[!theta %in% c(cal$theta_star, 0), n])
 )
 unit_lab <- c(
   "Calibration of θ* (paper Step 3)" = "large datasets of 50,000",
   "True values ψ(θ*) and ψ(0)" = "large datasets of 50,000",
-  "Simulated studies (paper Steps 3–5)" = "CCW analyses of 200 patients"
+  "Simulated studies (paper Steps 3–5)" = "CCW analyses of 200 patients",
+  "Confidence belt: true values at the grid nodes" = "large datasets of 50,000",
+  "Confidence belt: simulated studies at the grid nodes" = "CCW analyses of 200 patients"
 )
 rt <- mt[, .(seconds = sum(seconds, na.rm = TRUE)), by = stage]
 rt[, `:=`(n = units[stage], what = unit_lab[stage])]
@@ -210,12 +220,12 @@ rs <- targets::tar_read(run_settings, store = store)
 # Workers actually used, counted from the timestamps of the simulation branches
 source(file.path(root, "R", "utils.R"), local = TRUE)
 rs$workers <- observed_workers(mt)
-heavy <- mt[grepl("^(calibration|truth|sim_results)_maringe", name)]
+heavy <- mt[grepl("^(calibration|calib_rows_[0-9]|truth_rows|sim_results|belt_truth_rows|belt_sims_[0-9])_maringe", name)]
 # Elapsed time of the simulation stages, from the first start to the last finish
 wall <- as.numeric(difftime(max(heavy$time), min(heavy$time - heavy$seconds), units = "mins"))
 ```
 
-Computing time was `r formatC(tot / 60, format = "f", digits = 1)` minutes; with `r rs$workers` parallel worker`r if (isTRUE(rs$workers > 1)) "s" else ""` (`crew` `r rs$crew`, `r rs$cores` cores available, `r session$platform$version`) the simulation stages took `r formatC(wall, format = "f", digits = 1)` minutes of elapsed time. The `r n0(2 * B / cfg$batch_size)` batches of simulated studies and the two true values run in parallel; the calibration search is sequential because each step needs the previous one, so it sets the lower bound (`r formatC(rt[grepl("^Calibration", stage), seconds] / 60, format = "f", digits = 1)` minutes) however many workers are used. One CCW analysis of the 200 patients takes about `r formatC(1000 * rt[grepl("^Simulated", stage), seconds] / (2 * B), format = "f", digits = 0)` ms; the large datasets that define the true value take `r pct(sum(rt[grepl("^(Calibration|True)", stage), seconds]) / tot, 0)` of the computing time. Results do not depend on the number of workers: every replicate draws from its own seed.
+Computing time was `r formatC(tot / 60, format = "f", digits = 1)` minutes; with `r rs$workers` parallel worker`r if (isTRUE(rs$workers > 1)) "s" else ""` (`crew` `r rs$crew`, `r rs$cores` cores available, `r session$platform$version`) the simulation stages took `r formatC(wall, format = "f", digits = 1)` minutes of elapsed time. The `r n0(2 * B / cfg$batch_size)` batches of simulated studies and the large datasets behind the true values run in parallel. The calibration search has `r nrow(cal$path)` steps that follow each other, but the `r cfg$calibration$n_rep` large datasets within a step run in parallel, and its evaluations at θ\* and 0 are reused for the true values (`r formatC(rt[grepl("^Calibration", stage), seconds] / 60, format = "f", digits = 1)` minutes of computing time). One CCW analysis of the 200 patients takes about `r formatC(1000 * rt[grepl("^Simulated", stage), seconds] / (2 * B), format = "f", digits = 0)` ms; the large datasets that define the true value take `r pct(sum(rt[grepl("^(Calibration|True)", stage), seconds]) / tot, 0)` of the computing time. Results do not depend on the number of workers: every replicate draws from its own seed.
 
 # 2. How the simulation works {#methods}
 
@@ -326,7 +336,7 @@ knitr::include_graphics(fig(grep("fig_ci_methods\\.png$", targets::tar_read(fig_
 
 The bootstrap-t uses the quantiles of $T$ at one true effect. The confidence belt lets them depend on the true value (Neyman construction, test inversion):
 
-1. **Grid of true effects.** Besides θ\* and 0, the study is replayed at `r nrow(belt_maringe$quantiles) - 2` further values of θ (`r n0(max(belt_maringe$quantiles[!theta %in% c(cal$theta_star, 0), n]))` replays each, same seeds), each with its own true value $\psi(\theta)$ (`r cfg_belt_truth` large datasets).
+1. **Grid of true effects.** Besides θ\* and 0, the study is replayed at `r nrow(belt_maringe$quantiles) - 2` further values of θ, each with its own true value $\psi(\theta)$ (`r cfg_belt_truth` large datasets). The grid points are Chebyshev–Lobatto nodes in ψ over the range where CI endpoints fall (observed CI and the outer 0.5% of replicate Wald endpoints, widened by 10%), mapped to θ through the ψ(θ) values from the calibration. Each point gets `r n0(cfg_belt_b$B_start)` replays first (same seeds), then more until the Monte Carlo SE of both quantiles of $T$ is below `r cfg_belt_b$target_mcse` (at most `r n0(cfg_belt_b$B_max)`): `r n0(min(belt_maringe$quantiles[!theta %in% c(cal$theta_star, 0), n]))` to `r n0(max(belt_maringe$quantiles[!theta %in% c(cal$theta_star, 0), n]))` replays per point.
 2. **Quantile curves.** At each grid point, the 2.5% and 97.5% quantiles of $T = (\hat\psi - \psi)/\widehat{SE}$; a weighted polynomial in $\psi$ (degree `r belt_maringe$degree`) smooths them across the grid (figure below).
 3. **Inversion.** The CI is every $\psi_0$ with $q_{2.5}(\psi_0) \le (\hat\psi - \psi_0)/\widehat{SE} \le q_{97.5}(\psi_0)$, i.e. every true value that a 5% test calibrated *at that value* would not reject.
 
@@ -439,10 +449,10 @@ $$W_i(t) = 1 \text{ for } t < g, \qquad W_i(t) = 1/\hat\pi(Z_i) \text{ for } t \
 ## A4. True value, calibration, performance and adjustment
 
 - **Truth:** $\tilde\psi(\theta) = \frac{1}{R}\sum_{r=1}^{R} \hat\psi^{(r)}_N$, with $N = `r n0(ceiling(cfg$truth$n_target / nrow(bd)) * nrow(bd))`$ and $R = `r cfg$truth$n_rep`$.
-- **Calibration:** $\theta^*$ solves $\tilde\psi(\theta) = \hat\psi_{\text{obs}}$ (secant search from $\hat\theta$, `r cfg$calibration$n_rep` large datasets per step, tolerance `r cfg$calibration$tol`).
+- **Calibration:** $\theta^*$ solves $\tilde\psi(\theta) = \hat\psi_{\text{obs}}$ (secant search from $\hat\theta$ and 0, `r cfg$calibration$n_rep` large datasets per step run in parallel, tolerance `r cfg$calibration$tol`; the same seeds at every θ, so the evaluations at θ\* and 0 are the first `r cfg$calibration$n_rep` of the `r cfg$truth$n_rep` large datasets of the true values).
 - **Performance** over $B = `r n0(B)`$ replicates: bias $= \bar{\hat\psi} - \psi$; coverage $= B^{-1}\sum_b I(|\hat\psi_b - \psi| \le 1.96\,\widehat{SE}_b)$; rejection rate $= B^{-1}\sum_b I(|\hat\psi_b| > 1.96\,\widehat{SE}_b)$. The MCSE of the bias includes the truth's MC error.
 - **Adjustment:** $\hat\psi^{adj} = \hat\psi - \widehat{\text{bias}}$; CI $\hat\psi^{adj} \pm 1.96\, k\, \widehat{SE}$ with $k = \max(1, SE_{emp}/SE_{mod})$; critical value $z^*$ = 95th percentile of $|z|$ under $\theta = 0$. Two-fold cross-fitting over replicate index for the adjusted performance.
-- **Confidence belt:** grid quantiles $q_a(\psi_j)$ of $(\hat\psi_b - \psi_j)/\widehat{SE}_b$ (type 8), smoothed by a weighted polynomial in $\psi$ (weights = replays; constant beyond the grid); CI $= \{\psi_0: q_{2.5}(\psi_0) \le (\hat\psi - \psi_0)/\widehat{SE} \le q_{97.5}(\psi_0)\}$ by bisection. Check: leave the checked grid point out, two-fold cross-fitting over replicate index.
+- **Confidence belt:** grid of Chebyshev–Lobatto nodes in ψ (endpoints included, `r cfg_belt_b$n_nodes` nodes, nodes within `r cfg_belt_b$min_gap` of a main-scenario truth dropped); replays per node added in batches until the order-statistic MCSE of both quantiles is below `r cfg_belt_b$target_mcse`; grid quantiles $q_a(\psi_j)$ of $(\hat\psi_b - \psi_j)/\widehat{SE}_b$ (type 8), smoothed by a weighted polynomial in $\psi$ (weights = replays; constant beyond the grid); CI $= \{\psi_0: q_{2.5}(\psi_0) \le (\hat\psi - \psi_0)/\widehat{SE} \le q_{97.5}(\psi_0)\}$ by bisection. Check: leave the checked grid point out, two-fold cross-fitting over replicate index.
 - **Bootstrap-t CI:** $[\hat\psi - q_{97.5}\widehat{SE},\ \hat\psi - q_{2.5}\widehat{SE}]$, $q_a$ = quantile of $(\hat\psi_b - \psi)/\widehat{SE}_b$ over the replicates at $\theta^*$ (type 8). Transfer check: quantiles learned at $\theta^*$ applied at $\theta = 0$ and vice versa.
 
 ```{r code-truth}
@@ -450,7 +460,7 @@ $$W_i(t) = 1 \text{ for } t < g, \qquad W_i(t) = 1/\hat\pi(Z_i) \text{ for } t \
 #| eval: false
 #| code-fold: true
 #| code-summary: "R code: truth and calibration (R/truth.R)"
-#| code: !expr c(fun_src("truth.R", "compute_truth"), "", fun_src("truth.R", "calibrate_theta"))
+#| code: !expr c(fun_src("truth.R", "truth_point"), "", fun_src("truth.R", "calib_start"), "", fun_src("truth.R", "calib_next"), "", fun_src("truth.R", "finish_calibration"))
 ```
 
 ## A5. Settings and software

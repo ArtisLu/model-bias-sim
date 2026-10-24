@@ -45,15 +45,46 @@ per_dataset <- tar_map(
   tar_target(base_data, prepare_base_data(base_file, cfg$datasets[[ds]], ds)),
   tar_target(obs_result, run_pipeline(base_data, cfg$datasets[[ds]]$pipeline)),
 
-  # Simulated world: reference DGM, calibration of theta* (paper Step 3), true values
+  # Simulated world: reference DGM, calibration of theta* (paper Step 3), true values.
+  # One branch per large dataset, so calibration steps and truths run in parallel; every
+  # (theta, seed) evaluation is reused wherever it is needed again (CRN)
   tar_target(dgm, fit_dgm(base_data, cfg$datasets[[ds]][["dgm"]], cfg$datasets[[ds]]$censoring)),
-  tar_target(calibration, calibrate_theta(dgm, base_data, obs_result, cfg$datasets[[ds]]$pipeline, cfg)),
-  tar_target(theta_sim, c(calibration$theta_star, 0)),
+  tar_target(calib_theta_1, calib_start(dgm)),
   tar_target(
-    truth,
-    compute_truth(dgm, base_data, theta_sim, cfg$datasets[[ds]]$pipeline, cfg),
-    pattern = map(theta_sim)
+    calib_rows_1,
+    truth_point(dgm, base_data, calib_theta_1, calib_seed_id, truth_seeds,
+                cfg$datasets[[ds]]$pipeline, cfg),
+    pattern = cross(calib_theta_1, calib_seed_id)
   ),
+  tar_target(calib_theta_2, calib_next(calib_rows_1, obs_result$estimate, cfg$calibration)),
+  tar_target(
+    calib_rows_2,
+    truth_point(dgm, base_data, calib_theta_2, calib_seed_id, truth_seeds,
+                cfg$datasets[[ds]]$pipeline, cfg, known = calib_rows_1),
+    pattern = map(calib_seed_id)
+  ),
+  tar_target(calib_theta_3, calib_next(rbind(calib_rows_1, calib_rows_2), obs_result$estimate,
+                                       cfg$calibration)),
+  tar_target(
+    calib_rows_3,
+    truth_point(dgm, base_data, calib_theta_3, calib_seed_id, truth_seeds,
+                cfg$datasets[[ds]]$pipeline, cfg, known = rbind(calib_rows_1, calib_rows_2)),
+    pattern = map(calib_seed_id)
+  ),
+  # Serial secant steps only if the two parallel stages did not reach the tolerance
+  tar_target(calibration, finish_calibration(
+    rbind(calib_rows_1, calib_rows_2, calib_rows_3), dgm, base_data, obs_result,
+    cfg$datasets[[ds]]$pipeline, cfg, truth_seeds
+  )),
+  tar_target(theta_sim, c(calibration$theta_star, 0)),
+  # Calibration already evaluated theta* and 0 on the first calibration seeds
+  tar_target(
+    truth_rows,
+    truth_point(dgm, base_data, theta_sim, truth_seed_id, truth_seeds,
+                cfg$datasets[[ds]]$pipeline, cfg, known = calibration$evals),
+    pattern = cross(theta_sim, truth_seed_id)
+  ),
+  tar_target(truth, summarise_truth(truth_rows)),
   tar_target(truth_table, make_truth_table(truth, ds)),
 
   # Replicates: one branch per (scenario, batch); CRN seeds tied to replicate index
@@ -67,22 +98,35 @@ per_dataset <- tar_map(
   # Summaries and correction (paper Steps 6-7)
   tar_target(performance, summarise_performance(sim_results, truth_table)),
   tar_target(performance_rsimsum, rsimsum_check(sim_results, truth_table)),
-  # Confidence belt: extra grid of true effects, their truths and replicates (same CRN seeds)
-  tar_target(belt_theta, belt_theta_grid(cfg_belt$datasets[[ds]]$theta_extra, theta_sim)),
+  # Confidence belt: Chebyshev-Lobatto nodes over the psi range where CI endpoints fall, mapped
+  # to theta through the psi(theta) points already evaluated; truths and replicates (same CRN
+  # seeds) at each node; replicates topped up until the quantiles of T reach the target MCSE
+  tar_target(belt_range, belt_psi_range(obs_result, sim_results, cfg_belt$tail, cfg_belt$expand)),
+  tar_target(belt_theta, belt_theta_plan(
+    belt_range, truth_table, rbind(calibration$evals, truth_rows), cfg_belt
+  )),
   tar_target(
-    belt_truth,
-    compute_truth(dgm, base_data, belt_theta, cfg$datasets[[ds]]$pipeline, cfg,
-                  n_rep = cfg_belt$truth_n_rep),
-    pattern = map(belt_theta)
+    belt_truth_rows,
+    truth_point(dgm, base_data, belt_theta, belt_seed_id, truth_seeds,
+                cfg$datasets[[ds]]$pipeline, cfg, known = calibration$evals),
+    pattern = cross(belt_theta, belt_seed_id)
   ),
+  tar_target(belt_truth, summarise_truth(belt_truth_rows)),
   tar_target(
-    belt_sims,
-    run_batch(base_data, dgm, belt_theta, crn_seeds[seq_len(min(cfg_belt$B, cfg$B))],
-              belt_batch_id, cfg$datasets[[ds]]$pipeline, cfg$batch_size)[, dataset := ds],
+    belt_sims_1,
+    run_batch(base_data, dgm, belt_theta, belt_seeds, belt_batch_id, cfg$datasets[[ds]]$pipeline,
+              cfg$batch_size)[, dataset := ds],
     pattern = cross(belt_theta, belt_batch_id)
   ),
+  tar_target(belt_plan, belt_topup_plan(belt_sims_1, belt_truth, cfg_belt, cfg$batch_size)),
+  tar_target(
+    belt_sims_2,
+    run_belt_topup(base_data, dgm, belt_theta, belt_seeds, belt_topup_id, belt_plan,
+                   cfg$datasets[[ds]]$pipeline, cfg$batch_size),
+    pattern = cross(belt_theta, belt_topup_id)
+  ),
   tar_target(belt, fit_belt(
-    rbind(sim_results, belt_sims, fill = TRUE),
+    rbind(sim_results, belt_sims_1, belt_sims_2, fill = TRUE),
     rbind(truth_table[, .(theta, truth)], belt_truth[, .(theta, truth)]), cfg_belt
   )),
   tar_target(correction, correct_estimate(obs_result, performance, sim_results, ds, belt = belt)),
@@ -120,7 +164,21 @@ per_dataset <- tar_map(
 list(
   tar_target(crn_seeds, make_crn_seeds(cfg$seed_master, cfg$B)),
   tar_target(batch_id, seq_len(ceiling(cfg$B / cfg$batch_size))),
-  tar_target(belt_batch_id, seq_len(ceiling(min(cfg_belt$B, cfg$B) / cfg$batch_size))),
+  # Truth seeds: CRN across theta; calibration, main truths and belt truths use prefixes of them
+  tar_target(truth_seeds, make_crn_seeds(
+    cfg$seed_truth, max(cfg$truth$n_rep, cfg$calibration$n_rep, cfg_belt$truth_n_rep)
+  )),
+  tar_target(calib_seed_id, seq_len(cfg$calibration$n_rep)),
+  tar_target(truth_seed_id, seq_len(cfg$truth$n_rep)),
+  tar_target(belt_seed_id, seq_len(cfg_belt$truth_n_rep)),
+  # Belt replicates: first stage B_start per node, top-up batches up to B_max where needed
+  tar_target(belt_seeds, crn_seeds[seq_len(min(cfg_belt$B_max, cfg$B))]),
+  tar_target(belt_batch_id, seq_len(ceiling(min(cfg_belt$B_start, cfg$B) / cfg$batch_size))),
+  tar_target(belt_topup_id, {
+    n1 <- length(belt_batch_id)
+    # At least one id so the pattern is never empty; unneeded batches return no rows
+    seq.int(n1 + 1L, max(n1 + 1L, ceiling(min(cfg_belt$B_max, cfg$B) / cfg$batch_size)))
+  }),
   per_dataset,
 
   # Across datasets
@@ -159,6 +217,7 @@ list(
         report_qmd, targets::tar_path_store(), out_dir,
         deps = list(
           performance_maringe, correction_maringe, calibration_maringe, dgm_maringe,
+          belt_plan_maringe,
           obs_result_maringe, base_data_maringe, sim_results_maringe, truth_table_maringe,
           perf_adjusted_maringe, table_baseline_maringe, table_results_maringe,
           ci_methods_maringe, table_ci_methods_maringe, fig_ci_methods_maringe, belt_maringe,

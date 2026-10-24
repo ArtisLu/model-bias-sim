@@ -51,7 +51,7 @@ meta <- targets::tar_meta(fields = c(name, type, time, seconds), targets_only = 
 meta <- meta[meta$type %in% c("stem", "branch"), ]
 secs_sim <- sum(meta[grepl(paste0("^sim_results_", ds, "_"), meta$name), ]$seconds, na.rm = TRUE)
 secs_all <- sum(meta$seconds, na.rm = TRUE)
-heavy <- meta[grepl(paste0("^(calibration|truth|sim_results)_", ds), meta$name), ]
+heavy <- meta[grepl(paste0("^(calibration|calib_rows_[0-9]|truth_rows|sim_results)_", ds), meta$name), ]
 mins_wall <- as.numeric(difftime(max(heavy$time), min(heavy$time - heavy$seconds), units = "mins"))
 rs <- targets::tar_read(run_settings, store = store)
 # Workers actually used, counted from the timestamps of the simulation branches
@@ -216,7 +216,7 @@ doc <- txt(doc, paste0(
   "CCW analysis: the reference model was applied to ", cfg$truth$n_rep, " independent simulated datasets ",
   "of ", n0(ceiling(cfg$truth$n_target / nrow(bd)) * nrow(bd)), " patients each (stacked copies of the ",
   "baseline data) and the estimates were averaged. The calibration was performed by a secant search ",
-  "starting from the fitted coefficient θ̂ = ", f2(dgm$theta_hat), " (HR ", f4(exp(dgm$theta_hat)),
+  "starting from θ = 0 and the fitted coefficient θ̂ = ", f2(dgm$theta_hat), " (HR ", f4(exp(dgm$theta_hat)),
   "): θ was tuned until ψ(θ) equalled the observed CCW hazard ratio of ", f4(exp(obs_result$estimate)),
   ". This needed θ* = ", f2(cal$theta_star), " (Weibull HR ", f4(exp(cal$theta_star)), "), which results ",
   "in HR_CCW = ", f4(exp(po$truth)), " (", nrow(cal$path) - 2, " search step",
