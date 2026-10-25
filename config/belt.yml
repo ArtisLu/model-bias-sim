@@ -17,7 +17,9 @@ default:
   B_max: 5000
   target_mcse: 0.05
   truth_n_rep: 12    # large datasets per node truth (truth MCSE ~0.007 log-HR)
-  degree: 2          # polynomial in psi for the quantile curves of T
+  # Cubic: leave-one-node-out checks at B = 100,000 showed the quadratic too stiff (q_lo off by
+  # 0.1 at theta*); only refits the belt, its grid and replicates are unaffected (_targets.R)
+  degree: 3          # polynomial in psi for the quantile curves of T
 
 smoke:
   n_nodes: 3

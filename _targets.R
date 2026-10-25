@@ -13,6 +13,10 @@ attributes(cfg) <- list(names = names(cfg))
 # Confidence-belt settings live in their own file so that adding them did not invalidate cfg
 cfg_belt <- config::get(file = "config/belt.yml")
 attributes(cfg_belt) <- list(names = names(cfg_belt))
+# The curve degree only affects the fit of the belt, not its grid or replicates: kept out of
+# cfg_belt so that changing it refits the belt without rerunning the belt simulations
+belt_fit <- list(degree = cfg_belt$degree)
+cfg_belt$degree <- NULL
 active <- unlist(cfg$active_datasets)
 ds_labels <- vapply(cfg$datasets[active], `[[`, character(1), "label")
 # Outputs of the default (paper) profile go to reports/; other profiles get their own folder so a
@@ -139,7 +143,7 @@ per_dataset <- tar_map(
   # Column selections stay inside functions: tar_map() would rename `truth` to the truth target
   tar_target(belt, fit_belt(
     rbind(sim_results, belt_sims_1, belt_sims_2, fill = TRUE),
-    belt_truths(truth_table, belt_truth), cfg_belt
+    belt_truths(truth_table, belt_truth), belt_fit
   )),
   tar_target(correction, correct_estimate(obs_result, performance, sim_results, ds, belt = belt)),
 

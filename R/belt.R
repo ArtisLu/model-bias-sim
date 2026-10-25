@@ -157,7 +157,7 @@ belt_truths <- function(truth_table, belt_truth) {
 
 #' Build the belt: grid quantiles and curves, on all replicates and per cross-fitting fold
 #' @param sims Replicates at theta*, 0 and the extra grid; @param truths data.table theta, truth.
-#' @param cfg_belt Belt config; @param level Nominal level.
+#' @param cfg_belt Fit settings (degree); @param level Nominal level.
 #' @return list(quantiles, curve (all replicates), data (replicates, for the coverage check),
 #'   degree, level).
 fit_belt <- function(sims, truths, cfg_belt, level = 0.95) {
