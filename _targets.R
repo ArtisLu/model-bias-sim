@@ -104,13 +104,22 @@ per_dataset <- tar_map(
   # to theta through the psi(theta) points already evaluated; truths and replicates (same CRN
   # seeds) at each node; replicates topped up until the quantiles of T reach the target MCSE
   tar_target(belt_range, belt_psi_range(obs_result, sim_results, cfg_belt$tail, cfg_belt$expand)),
+  # Anchors at theta = +-bound and +-bound / 2: psi(theta) levels off for strong effects, so the
+  # nodes are placed by interpolation rather than extrapolation
+  tar_target(
+    belt_anchor_rows,
+    truth_point(dgm, base_data, belt_anchor_theta, anchor_seed_id, truth_seeds,
+                cfg$datasets[[ds]]$pipeline, cfg, known = calibration$evals),
+    pattern = cross(belt_anchor_theta, anchor_seed_id)
+  ),
   tar_target(belt_theta, belt_theta_plan(
-    belt_range, truth_table, rbind(calibration$evals, truth_rows), cfg_belt
+    belt_range, truth_table, rbind(calibration$evals, truth_rows, belt_anchor_rows), cfg_belt
   )),
   tar_target(
     belt_truth_rows,
     truth_point(dgm, base_data, belt_theta, belt_seed_id, truth_seeds,
-                cfg$datasets[[ds]]$pipeline, cfg, known = calibration$evals),
+                cfg$datasets[[ds]]$pipeline, cfg,
+                known = rbind(calibration$evals, belt_anchor_rows)),
     pattern = cross(belt_theta, belt_seed_id)
   ),
   tar_target(belt_truth, summarise_truth(belt_truth_rows)),
@@ -169,11 +178,14 @@ list(
   tar_target(batch_id, seq_len(ceiling(cfg$B / cfg$batch_size))),
   # Truth seeds: CRN across theta; calibration, main truths and belt truths use prefixes of them
   tar_target(truth_seeds, make_crn_seeds(
-    cfg$seed_truth, max(cfg$truth$n_rep, cfg$calibration$n_rep, cfg_belt$truth_n_rep)
+    cfg$seed_truth,
+    max(cfg$truth$n_rep, cfg$calibration$n_rep, cfg_belt$truth_n_rep, cfg_belt$anchor_n_rep)
   )),
   tar_target(calib_seed_id, seq_len(cfg$calibration$n_rep)),
   tar_target(truth_seed_id, seq_len(cfg$truth$n_rep)),
   tar_target(belt_seed_id, seq_len(cfg_belt$truth_n_rep)),
+  tar_target(anchor_seed_id, seq_len(cfg_belt$anchor_n_rep)),
+  tar_target(belt_anchor_theta, c(-1, -0.5, 0.5, 1) * cfg_belt$bound),
   # Belt replicates: first stage B_start per node, top-up batches up to B_max where needed
   tar_target(belt_seeds, crn_seeds[seq_len(min(cfg_belt$B_max, cfg$B))]),
   tar_target(belt_batch_id, seq_len(ceiling(min(cfg_belt$B_start, cfg$B) / cfg$batch_size))),

@@ -28,16 +28,22 @@ cheb_lobatto <- function(range, k) {
 
 #' Theta values of the extra belt grid points
 #' @param range From `belt_psi_range()`; @param truth_table Main-scenario truths.
-#' @param psi_pts Large-dataset rows from `truth_point()` (calibration and main truths).
-#' @param cfg_belt Belt config (n_nodes, min_gap, bound).
+#' @param psi_pts Large-dataset rows from `truth_point()` (calibration, main truths and the
+#'   anchors at theta = +-bound and +-bound / 2).
+#' @param cfg_belt Belt config (n_nodes, min_gap).
 #' @return Sorted theta values, excluding nodes the main scenarios already cover.
 belt_theta_plan <- function(range, truth_table, psi_pts, cfg_belt) {
-  nodes <- cheb_lobatto(range, cfg_belt$n_nodes)
+  f <- psi_curve(summarise_truth(psi_pts)[, .(theta, psi = truth)])
+  th_range <- range(psi_pts$theta)
+  # psi(theta) flattens for strong effects (in the Maringe design deaths before surgery stay in
+  # the surgery arm), so the grid stops at the psi values the model produces within the anchors
+  reach <- f(th_range)
+  rng <- c(max(range[1], reach[1]), min(range[2], reach[2]))
+  nodes <- cheb_lobatto(rng, cfg_belt$n_nodes)
   # The main scenarios (10,000 replicates each) stand in for nodes close to them
-  keep <- vapply(nodes, function(x) all(abs(x - truth_table$truth) > cfg_belt$min_gap),
+  keep <- vapply(nodes, function(x) all(abs(x - truth_table$psi_large_sample) > cfg_belt$min_gap),
                  logical(1))
-  pts <- summarise_truth(psi_pts)[, .(theta, psi = truth)]
-  th <- unique(round(psi_to_theta(nodes[keep], pts, cfg_belt$bound), 6))
+  th <- unique(round(psi_to_theta(nodes[keep], f, th_range), 6))
   sort(th[vapply(th, function(x) all(abs(x - truth_table$theta) > 1e-6), logical(1))])
 }
 
@@ -140,11 +146,13 @@ belt_invert <- function(estimate, se, curve) {
   list(lo = lo, hi = hi, outside = lo < curve$range[1] | hi > curve$range[2])
 }
 
-#' True values at all belt grid points (main scenarios and extra nodes)
+#' True values (CCW large-sample limits) at all belt grid points (main scenarios and nodes)
 #' @param truth_table From `make_truth_table()`; @param belt_truth From `summarise_truth()`.
 #' @return data.table: theta, truth.
 belt_truths <- function(truth_table, belt_truth) {
-  rbind(truth_table[, .(theta, truth)], belt_truth[, .(theta, truth)])
+  # The belt is indexed by the CCW large-sample limit at every grid point, so the no-effect
+  # scenario enters at psi(0), not at the convention truth = 0 used for the type I error
+  rbind(truth_table[, .(theta, truth = psi_large_sample)], belt_truth[, .(theta, truth)])
 }
 
 #' Build the belt: grid quantiles and curves, on all replicates and per cross-fitting fold
@@ -161,12 +169,13 @@ fit_belt <- function(sims, truths, cfg_belt, level = 0.95) {
 }
 
 #' Coverage of the belt CI in the main scenarios, with the checked grid point left out
-#' @param sim_results Main replicates; @param truth_table From `make_truth_table()`.
+#' @param sim_results Main replicates; @param truth_table From `make_truth_table()`; coverage
+#'   is of the CCW large-sample limit (`psi_large_sample`), the value the belt is built for.
 #' @param belt From `fit_belt()`.
 #' @return Rows in the `compare_ci_methods()` format, plus share_outside.
 belt_coverage <- function(sim_results, truth_table, belt) {
-  d <- merge(sim_results[!is.na(estimate) & se > 0], truth_table[, .(dataset, theta, scenario, truth)],
-             by = c("dataset", "theta"))
+  tt <- truth_table[, .(dataset, theta, scenario, truth = psi_large_sample)]
+  d <- merge(sim_results[!is.na(estimate) & se > 0], tt, by = c("dataset", "theta"))
   data.table::rbindlist(lapply(c("observed", "null"), function(tg) {
     th <- d[scenario == tg, theta[1]]
     res <- data.table::rbindlist(lapply(0:1, function(k) {

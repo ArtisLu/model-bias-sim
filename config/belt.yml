@@ -9,7 +9,8 @@ default:
   tail: 0.005        # share of replicate endpoints allowed beyond the range, per side
   expand: 0.1        # widening of the range on each side (belt endpoints differ from Wald)
   min_gap: 0.05      # psi distance below which a node is dropped in favour of a main scenario
-  bound: 4           # |theta| cap for the nodes
+  bound: 4           # nodes lie within |theta| <= bound; psi is evaluated at +-bound and +-bound / 2
+  anchor_n_rep: 3    # large datasets per anchor (they only place the nodes)
   # Adaptive replicates per node: B_start first, then batches until the 2.5% and 97.5%
   # quantiles of T reach target_mcse (theta* and 0 reuse the main replicates)
   B_start: 1000
@@ -20,6 +21,7 @@ default:
 
 smoke:
   n_nodes: 3
+  anchor_n_rep: 1
   B_start: 10
   B_max: 20
   target_mcse: 0.01

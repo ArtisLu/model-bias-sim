@@ -15,20 +15,27 @@ test_that("belt inversion recovers a known non-pivotal T and covers at an interp
   expect_equal(mean(ci$lo <= 0 & 0 <= ci$hi), 0.95, tolerance = 0.012)
 })
 
-test_that("belt nodes span the range, skip the main scenarios and map to theta", {
+test_that("belt nodes span the reachable psi range, skip the main scenarios and map to theta", {
   expect_equal(cheb_lobatto(c(-1, 1), 3), c(-1, 0, 1))
   nodes <- cheb_lobatto(c(-2, 1), 5)
   expect_equal(range(nodes), c(-2, 1))
   expect_true(all(diff(nodes) > 0))
-  # psi = 0.8 * theta - 0.1 on the evaluated points
-  th <- rep(c(-1, 0, -0.5), each = 2)
-  pts <- data.table::data.table(theta = th, seed_id = 1:2, n_truth = 10L, estimate = 0.8 * th - 0.1)
-  tt <- data.table::data.table(theta = c(-1, 0), truth = c(-0.9, 0))
-  cb <- list(n_nodes = 3, min_gap = 0.05, bound = 4)
-  # Nodes at psi = -2, -0.5, 1; none within min_gap of the main truths
-  expect_equal(belt_theta_plan(c(-2, 1), tt, pts, cb), (c(-2, -0.5, 1) + 0.1) / 0.8)
-  # Nodes at the main-scenario truths (-0.9 and 0) are dropped
-  expect_equal(belt_theta_plan(c(-1.8, 0), tt, pts, cb), (-1.8 + 0.1) / 0.8)
+  # psi(theta) levels off for strong effects, as the CCW limit does; anchors at -4 and 4
+  f <- function(th) 1.5 * tanh(th / 2) - 0.04
+  th <- rep(c(-4, -3, -2, -1, -0.7, 0, 1, 2, 3, 4), each = 2)
+  pts <- data.table::data.table(theta = th, seed_id = 1:2, n_truth = 10L, estimate = f(th))
+  tt <- data.table::data.table(theta = c(-0.7, 0), truth = c(f(-0.7), 0),
+                               psi_large_sample = f(c(-0.7, 0)))
+  cb <- list(n_nodes = 5, min_gap = 0.05)
+  out <- belt_theta_plan(c(-1.96, 1.5), tt, pts, cb)
+  # Both requested ends lie beyond psi(-4) and psi(4): the grid runs from anchor to anchor
+  expect_equal(range(out), c(-4, 4))
+  nodes <- cheb_lobatto(f(c(-4, 4)), 5)
+  # The middle node coincides with psi(0) = -0.04 and is dropped
+  expect_equal(f(out), nodes[-3], tolerance = 0.01)
+  # A node at a main-scenario psi is dropped
+  out2 <- belt_theta_plan(c(f(-0.7), 1.5), tt, pts, list(n_nodes = 3, min_gap = 0.05))
+  expect_length(out2, 2L)
 })
 
 test_that("belt range covers the observed CI and the replicate endpoints", {
@@ -67,7 +74,7 @@ test_that("belt coverage rows fit the CI comparison format", {
   sim <- rbind(mk(-0.7, -0.5), mk(0, 0))
   extra <- rbind(mk(-1.5, -1), mk(1, 0.6))
   tt <- data.table::data.table(dataset = "m", theta = c(-0.7, 0), scenario = c("observed", "null"),
-                               truth = c(-0.5, 0))
+                               truth = c(-0.5, 0), psi_large_sample = c(-0.5, 0))
   belt <- fit_belt(rbind(sim, extra), data.table::data.table(theta = c(-0.7, 0, -1.5, 1),
                                                              truth = c(-0.5, 0, -1, 0.6)),
                    list(degree = 1))
@@ -76,10 +83,27 @@ test_that("belt coverage rows fit the CI comparison format", {
   expect_true(all(cm[method == "Confidence belt", coverage] > 0.9))
 })
 
-test_that("belt truths stack the main scenarios and the nodes", {
-  tt <- data.table::data.table(theta = c(-0.7, 0), truth = c(-0.5, 0), scenario = c("observed", "null"))
+test_that("belt truths use the CCW limit at every grid point, including no effect", {
+  tt <- data.table::data.table(theta = c(-0.7, 0), truth = c(-0.5, 0),
+                               scenario = c("observed", "null"), psi_large_sample = c(-0.5, -0.04))
   bt <- data.table::data.table(theta = c(-2, -0.2, 1.5), truth = c(-1.4, -0.15, 1), n_rep = 12L)
   out <- belt_truths(tt, bt)
   expect_named(out, c("theta", "truth"))
-  expect_equal(out$truth, c(-0.5, 0, -1.4, -0.15, 1))
+  expect_equal(out$truth, c(-0.5, -0.04, -1.4, -0.15, 1))
+})
+
+test_that("belt coverage of the null scenario is checked at psi(0)", {
+  set.seed(7)
+  mk <- function(th, psi) data.table::data.table(dataset = "m", theta = th, rep = 1:2000, se = 0.25,
+                                                 estimate = psi + 0.25 * rnorm(2000), status = "ok")
+  # CCW limit at no effect is -0.1, not 0: CIs built around psi(0) should cover psi(0)
+  sim <- rbind(mk(-0.7, -0.5), mk(0, -0.1))
+  extra <- rbind(mk(-1.5, -1), mk(1, 0.6))
+  tt <- data.table::data.table(dataset = "m", theta = c(-0.7, 0), scenario = c("observed", "null"),
+                               truth = c(-0.5, 0), psi_large_sample = c(-0.5, -0.1))
+  bt <- data.table::data.table(theta = c(-1.5, 1), truth = c(-1, 0.6))
+  belt <- fit_belt(rbind(sim, extra), belt_truths(tt, bt), list(degree = 1))
+  cv <- belt_coverage(sim, tt, belt)
+  expect_equal(cv[scenario == "null", coverage], 0.95, tolerance = 0.015)
+  expect_equal(cv[scenario == "null", miss_below], 0.025, tolerance = 0.01)
 })

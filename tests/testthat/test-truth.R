@@ -34,8 +34,12 @@ test_that("calibration steps converge on a smooth psi(theta)", {
   expect_equal(calib_next(rows, target, cc), best$theta)
 })
 
-test_that("psi_to_theta interpolates and extrapolates linearly", {
-  pts <- data.table(theta = c(-1, 0, 1), psi = c(-0.8, 0, 0.8))
-  expect_equal(psi_to_theta(c(-1.6, 0.4, 2.4), pts), c(-2, 0.5, 3))
-  expect_equal(psi_to_theta(2.4, pts, bound = 2), 2)
+test_that("psi_to_theta inverts the monotone psi curve and stops at the range ends", {
+  pts <- data.table(theta = c(-4, -1, 0, 1, 4), psi = c(-1.4, -0.8, 0, 0.8, 1.6))
+  f <- psi_curve(pts)
+  expect_equal(f(c(-1, 0, 1)), c(-0.8, 0, 0.8))
+  th <- psi_to_theta(c(-2, -0.4, 0.8, 3), f, c(-4, 4))
+  expect_equal(th[c(1, 4)], c(-4, 4))
+  expect_equal(f(th[2:3]), c(-0.4, 0.8), tolerance = 1e-6)
+  expect_true(all(diff(f(seq(-4, 4, 0.1))) >= 0))
 })

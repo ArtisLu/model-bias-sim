@@ -126,18 +126,25 @@ finish_calibration <- function(rows, dgm, data, obs_result, pipeline, cfg, seeds
   )
 }
 
-#' Map target psi values to theta through the evaluated psi(theta) points
-#' @param psi Target values; @param pts data.table theta, psi (at least two distinct thetas).
-#' @param bound |theta| cap.
-#' @return theta values (linear interpolation; linear extrapolation with the fitted slope).
-psi_to_theta <- function(psi, pts, bound = Inf) {
-  pts <- unique(pts[, .(theta, psi)], by = "theta")[order(psi)]
+#' Monotone interpolation of psi(theta) through the evaluated points
+#' @param pts data.table theta, psi (at least two distinct thetas).
+#' @return Function of theta (Hyman monotone cubic spline; flat beyond the points).
+psi_curve <- function(pts) {
+  pts <- unique(pts[, .(theta, psi)], by = "theta")[order(theta)]
   checkmate::assert_true(nrow(pts) >= 2)
-  slope <- unname(stats::coef(stats::lm(psi ~ theta, data = pts))[2])
-  th <- stats::approx(pts$psi, pts$theta, xout = psi, rule = 2)$y
-  below <- psi < pts$psi[1]
-  above <- psi > pts$psi[nrow(pts)]
-  th[below] <- pts$theta[1] + (psi[below] - pts$psi[1]) / slope
-  th[above] <- pts$theta[nrow(pts)] + (psi[above] - pts$psi[nrow(pts)]) / slope
-  pmax(-bound, pmin(bound, th))
+  # CRN keeps psi monotone in theta; cummax only guards against Monte Carlo ties
+  y <- cummax(pts$psi)
+  stats::splinefun(pts$theta, y, method = "hyman")
+}
+
+#' Map target psi values to theta by inverting `psi_curve()`
+#' @param psi Target values; @param f From `psi_curve()`; @param th_range Theta range searched.
+#' @return theta values; targets beyond psi at the range ends map to the range ends.
+psi_to_theta <- function(psi, f, th_range) {
+  ends <- f(th_range)
+  vapply(psi, function(p) {
+    if (p <= ends[1]) return(th_range[1])
+    if (p >= ends[2]) return(th_range[2])
+    stats::uniroot(function(t) f(t) - p, th_range, tol = 1e-9)$root
+  }, numeric(1))
 }
