@@ -348,7 +348,7 @@ The bootstrap-t uses the quantiles of $T$ at one true effect. The confidence bel
 knitr::include_graphics(fig(grep("fig_belt\\.png$", targets::tar_read(fig_belt_maringe, store = store), value = TRUE)), error = FALSE)
 ```
 
-**Check.** A CI covers $\psi_0$ exactly when the test at $\psi_0$ does not reject, so with the checked effect on the grid coverage would hold by construction. The check therefore drops that grid point and refits the curves (and cross-fits over replays), so the belt has to interpolate, as it would for an unknown true effect:
+**Check.** A CI covers $\psi_0$ exactly when the test at $\psi_0$ does not reject, so with the checked effect on the grid coverage would hold by construction. The check therefore drops that grid point and refits the curves (and cross-fits over replays), so the belt has to interpolate, as it would for an unknown true effect. The MCSEs come from a bootstrap over replays (200 resamples, replays resampled jointly across grid points) and include the Monte Carlo error of the grid quantiles, not only the binomial error of the checked CIs (`r pct(bo$mcse_binomial, 2)`):
 
 - **Observed effect:** coverage `r pct(bo$coverage)` (MCSE `r pct(bo$mcse)`); `r pct(bo$miss_below)` of CIs entirely below the truth, `r pct(bo$miss_above)` above.
 - **No effect:** coverage of ψ(0) = `r f3(pn$psi_large_sample)` (HR `r hr(pn$psi_large_sample)`), the CCW large-sample limit when surgery has no effect, `r pct(bn$coverage)` (MCSE `r pct(bn$mcse)`); `r pct(bn$miss_below)` below, `r pct(bn$miss_above)` above. The belt is indexed by the CCW limit at every grid point, so here it targets ψ(0) rather than the convention 0 used for the type I error (Section 2.2); whether a belt CI excludes HR = 1 is therefore not a test of no effect.

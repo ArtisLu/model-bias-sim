@@ -103,7 +103,9 @@ test_that("belt coverage of the null scenario is checked at psi(0)", {
                                truth = c(-0.5, 0), psi_large_sample = c(-0.5, -0.1))
   bt <- data.table::data.table(theta = c(-1.5, 1), truth = c(-1, 0.6))
   belt <- fit_belt(rbind(sim, extra), belt_truths(tt, bt), list(degree = 1))
-  cv <- belt_coverage(sim, tt, belt)
+  cv <- belt_coverage(sim, tt, belt, n_boot = 30)
   expect_equal(cv[scenario == "null", coverage], 0.95, tolerance = 0.015)
+  # The bootstrap MCSE includes the grid's Monte Carlo error, so it exceeds the binomial one
+  expect_true(all(cv$mcse > cv$mcse_binomial))
   expect_equal(cv[scenario == "null", miss_below], 0.025, tolerance = 0.01)
 })

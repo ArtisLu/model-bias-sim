@@ -31,6 +31,8 @@ smoke:
   degree: 1
 
 b100k:
-  B_max: 10000
-  target_mcse: 0.035
+  # Grid quantile error is the main Monte Carlo error of the belt coverage check: at 0.035
+  # (B_max 10,000) coverage was 94.7% / 95.1%; 0.02 needs up to ~30,000 replicates per node
+  B_max: 30000
+  target_mcse: 0.02
   truth_n_rep: 24

@@ -268,6 +268,9 @@ ci_cols <- c("Wald (robust SE)" = "black", "QBA widening" = "red", "Bootstrap-t"
 #' @return ggplot.
 plot_ci_methods <- function(ci) {
   d <- data.table::copy(ci)
+  # Belt rows carry bootstrap MCSEs that include the grid's Monte Carlo error; others binomial
+  for (v in c("mcse_below", "mcse_above")) if (!v %in% names(d)) d[, (v) := NA_real_]
+  mcse_side <- function(p, n, boot) data.table::fcoalesce(boot, sqrt(p * (1 - p) / n))
   lv <- c("Not learned", "Same scenario (cross-fitted)", "Other scenario (transfer)",
           "Grid without this effect (cross-fitted)")
   d[, learned := factor(data.table::fcase(
@@ -278,9 +281,9 @@ plot_ci_methods <- function(ci) {
   long <- data.table::rbindlist(list(
     d[, .(method, scenario, learned, measure = "Coverage", value = coverage, mcse, ref = 0.95)],
     d[, .(method, scenario, learned, measure = "CI entirely above truth", value = miss_above,
-          mcse = sqrt(miss_above * (1 - miss_above) / n), ref = 0.025)],
+          mcse = mcse_side(miss_above, n, mcse_above), ref = 0.025)],
     d[, .(method, scenario, learned, measure = "CI entirely below truth", value = miss_below,
-          mcse = sqrt(miss_below * (1 - miss_below) / n), ref = 0.025)]
+          mcse = mcse_side(miss_below, n, mcse_below), ref = 0.025)]
   ))
   long[, measure := factor(measure, c("Coverage", "CI entirely above truth", "CI entirely below truth"))]
   long[, method := factor(method, intersect(names(ci_cols), unique(method)))]

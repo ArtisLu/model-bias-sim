@@ -121,7 +121,11 @@ belt_curve <- function(q, degree) {
 belt_q <- function(curve, which, psi) {
   # No extrapolation of the polynomial: outside the grid the nearest quantile is used
   p <- pmin(pmax(psi, curve$range[1]), curve$range[2])
-  drop(outer(p, 0:curve$degree, `^`) %*% curve[[which]])
+  b <- curve[[which]]
+  # Horner's rule: much faster than a design matrix inside the bisection
+  out <- rep(b[length(b)], length(p))
+  for (i in rev(seq_len(length(b) - 1L))) out <- out * p + b[i]
+  out
 }
 
 #' Invert the belt: all psi0 with q_lo(psi0) <= (estimate - psi0) / se <= q_hi(psi0)
@@ -133,11 +137,12 @@ belt_invert <- function(estimate, se, curve) {
   root <- function(which) {
     a <- estimate - 10 * se
     b <- estimate + 10 * se
-    for (i in 1:60) {
+    # 45 halvings of a 20-SE bracket: endpoint precision below 1e-12 SE
+    for (i in 1:45) {
       m <- (a + b) / 2
       pos <- (estimate - m) / se - belt_q(curve, which, m) > 0
-      a <- ifelse(pos, m, a)
-      b <- ifelse(pos, b, m)
+      a[pos] <- m[pos]
+      b[!pos] <- m[!pos]
     }
     (a + b) / 2
   }
@@ -172,29 +177,52 @@ fit_belt <- function(sims, truths, cfg_belt, level = 0.95) {
 #' @param sim_results Main replicates; @param truth_table From `make_truth_table()`; coverage
 #'   is of the CCW large-sample limit (`psi_large_sample`), the value the belt is built for.
 #' @param belt From `fit_belt()`.
-#' @return Rows in the `compare_ci_methods()` format, plus share_outside.
-belt_coverage <- function(sim_results, truth_table, belt) {
+#' @param n_boot Bootstrap resamples for the MCSE; @param seed Seed of the bootstrap.
+#' @return Rows in the `compare_ci_methods()` format, plus share_outside, mcse_binomial,
+#'   mcse_below and mcse_above.
+belt_coverage <- function(sim_results, truth_table, belt, n_boot = 200L, seed = 20261025L) {
   tt <- truth_table[, .(dataset, theta, scenario, truth = psi_large_sample)]
   d <- merge(sim_results[!is.na(estimate) & se > 0], tt, by = c("dataset", "theta"))
-  data.table::rbindlist(lapply(c("observed", "null"), function(tg) {
+  check <- function(tg, boot) {
     th <- d[scenario == tg, theta[1]]
-    res <- data.table::rbindlist(lapply(0:1, function(k) {
+    data.table::rbindlist(lapply(0:1, function(k) {
       # A CI covers psi0 exactly when the test at psi0 does not reject, so with psi0 on the grid
       # coverage holds by construction. Dropping that grid point makes the belt interpolate, the
       # situation of a real study. Folds split replicates (CRN links replicate b across thetas).
       g <- belt$data[abs(theta - th) > 1e-8 & rep %% 2L != k]
-      cv <- belt_curve(belt_quantiles(g, belt$level), belt$degree)
       x <- d[scenario == tg & rep %% 2L == k]
+      if (boot) {
+        # Resample replicate indices jointly across grid points (CRN pairs them), and the
+        # checked CIs, so the MCSE includes the Monte Carlo error of the grid quantiles
+        ids <- data.table::data.table(rep = sample(unique(g$rep), replace = TRUE))
+        g <- g[ids, on = "rep", nomatch = NULL, allow.cartesian = TRUE]
+        x <- x[sample.int(nrow(x), replace = TRUE)]
+      }
+      cv <- belt_curve(belt_quantiles(g, belt$level), belt$degree)
       ci <- belt_invert(x$estimate, x$se, cv)
       data.table::data.table(lo = ci$lo, hi = ci$hi, truth = x$truth, outside = ci$outside)
     }))
-    hit <- res$lo <= res$truth & res$truth <= res$hi
-    m <- mean(hit)
+  }
+  rates <- function(res) {
+    c(coverage = mean(res$lo <= res$truth & res$truth <= res$hi),
+      below = mean(res$hi < res$truth), above = mean(res$lo > res$truth))
+  }
+  data.table::rbindlist(lapply(c("observed", "null"), function(tg) {
+    res <- check(tg, FALSE)
+    r <- rates(res)
+    bt <- if (n_boot > 1) {
+      withr::with_seed(seed, t(vapply(seq_len(n_boot), function(b) rates(check(tg, TRUE)),
+                                      numeric(3))))
+    } else {
+      matrix(NA_real_, 1, 3)
+    }
     data.table::data.table(
       method = "Confidence belt", scenario = tg, source = "grid", check = "leave-one-out",
-      coverage = m, mcse = sqrt(m * (1 - m) / nrow(res)),
-      miss_below = mean(res$hi < res$truth), miss_above = mean(res$lo > res$truth),
-      n = nrow(res), share_outside = mean(res$outside)
+      coverage = r[["coverage"]], mcse = stats::sd(bt[, 1]),
+      miss_below = r[["below"]], miss_above = r[["above"]],
+      n = nrow(res), share_outside = mean(res$outside),
+      mcse_binomial = sqrt(r[["coverage"]] * (1 - r[["coverage"]]) / nrow(res)),
+      mcse_below = stats::sd(bt[, 2]), mcse_above = stats::sd(bt[, 3])
     )
   }))
 }
