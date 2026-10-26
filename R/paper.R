@@ -638,10 +638,23 @@ render_report <- function(qmd, store, out_dir, deps) {
   # Quarto starts its own R session in the report folder, where renv is not activated: hand it
   # this session's libraries so it finds the same packages
   libs <- paste(.libPaths(), collapse = .Platform$path.sep)
-  withr::with_envvar(c(R_LIBS = libs, R_LIBS_USER = libs), {
+  log <- file.path(out_dir, "render_error.log")
+  unlink(log)
+  withr::with_envvar(c(R_LIBS = libs, R_LIBS_USER = libs), tryCatch(
     quarto::quarto_render(
       src, execute_params = list(store = normalizePath(store, winslash = "/")), quiet = FALSE
-    )
-  })
+    ),
+    error = function(e) {
+      # targets shortens error messages, which cuts off the R error inside the Quarto output
+      msg <- c(conditionMessage(e), e$stderr)
+      p <- e$parent
+      while (!is.null(p)) {
+        msg <- c(msg, "", conditionMessage(p), p$stderr, p$stdout)
+        p <- p$parent
+      }
+      writeLines(as.character(unlist(msg)), log)
+      stop("Quarto rendering failed; full output in ", log, call. = FALSE)
+    }
+  ))
   sub("\\.qmd$", ".html", src)
 }

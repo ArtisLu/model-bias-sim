@@ -244,7 +244,9 @@ list(
           performance_rsimsum_maringe, balance_maringe, paper_figures_maringe,
           fig_protocol_maringe, fig_balance_maringe, run_settings, session
         )
-      ), format = "file")
+        # Main process, not a crew worker: workers hold large datasets after a long run, and
+        # quarto starts its own R session that reads the store again
+      ), format = "file", deployment = "main")
     )
   }
 )
