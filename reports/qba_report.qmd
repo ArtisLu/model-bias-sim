@@ -15,6 +15,7 @@ format:
     code-tools: false
 params:
   store: ""
+  root: ""
 execute:
   echo: false
   warning: false
@@ -23,9 +24,9 @@ execute:
 
 ```{r setup}
 library(data.table)
-# Project root = first folder upwards that holds _targets.R (the report may be rendered elsewhere)
-# Forward slashes: backslashes in Windows paths would be read as escapes in the image links
-root <- normalizePath(".", winslash = "/")
+# Project root: passed by the pipeline (it renders in a temporary folder), else the first folder
+# upwards that holds _targets.R. Forward slashes: backslashes would be read as escapes in links
+root <- if (nzchar(params$root)) params$root else normalizePath(".", winslash = "/")
 while (!file.exists(file.path(root, "_targets.R")) && dirname(root) != root) root <- dirname(root)
 # Results store: passed by the pipeline (one per config profile), else the paper run
 store <- if (nzchar(params$store)) params$store else file.path(root, "_targets")
