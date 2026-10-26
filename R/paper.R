@@ -268,6 +268,9 @@ ci_cols <- c("Wald (robust SE)" = "black", "QBA widening" = "red", "Bootstrap-t"
 #' @return ggplot.
 plot_ci_methods <- function(ci) {
   d <- data.table::copy(ci)
+  # Belt rows carry bootstrap MCSEs that include the grid's Monte Carlo error; others binomial
+  for (v in c("mcse_below", "mcse_above")) if (!v %in% names(d)) d[, (v) := NA_real_]
+  mcse_side <- function(p, n, boot) data.table::fcoalesce(boot, sqrt(p * (1 - p) / n))
   lv <- c("Not learned", "Same scenario (cross-fitted)", "Other scenario (transfer)",
           "Grid without this effect (cross-fitted)")
   d[, learned := factor(data.table::fcase(
@@ -278,9 +281,9 @@ plot_ci_methods <- function(ci) {
   long <- data.table::rbindlist(list(
     d[, .(method, scenario, learned, measure = "Coverage", value = coverage, mcse, ref = 0.95)],
     d[, .(method, scenario, learned, measure = "CI entirely above truth", value = miss_above,
-          mcse = sqrt(miss_above * (1 - miss_above) / n), ref = 0.025)],
+          mcse = mcse_side(miss_above, n, mcse_above), ref = 0.025)],
     d[, .(method, scenario, learned, measure = "CI entirely below truth", value = miss_below,
-          mcse = sqrt(miss_below * (1 - miss_below) / n), ref = 0.025)]
+          mcse = mcse_side(miss_below, n, mcse_below), ref = 0.025)]
   ))
   long[, measure := factor(measure, c("Coverage", "CI entirely above truth", "CI entirely below truth"))]
   long[, method := factor(method, intersect(names(ci_cols), unique(method)))]
@@ -625,20 +628,38 @@ save_balance_figure <- function(bal, spec, dir) {
 #' @return Path of the HTML report.
 render_report <- function(qmd, store, out_dir, deps) {
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-  src <- file.path(out_dir, basename(qmd))
-  # Other profiles render a temporary copy, so the paper report in reports/ is never touched
-  copied <- normalizePath(src, winslash = "/", mustWork = FALSE) != normalizePath(qmd, winslash = "/")
-  if (copied) {
-    file.copy(qmd, src, overwrite = TRUE)
-    on.exit(unlink(src), add = TRUE)
-  }
-  # Quarto starts its own R session in the report folder, where renv is not activated: hand it
-  # this session's libraries so it finds the same packages
+  # Render in a temporary folder and copy only the HTML back: in a synced project folder
+  # (Dropbox) the sync client locks Quarto's intermediate files and the cleanup fails
+  tmp <- tempfile("qba_report_")
+  dir.create(tmp)
+  on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
+  src <- file.path(tmp, basename(qmd))
+  file.copy(qmd, src)
+  # Quarto starts its own R session, where renv is not activated: hand it this session's
+  # libraries so it finds the same packages
   libs <- paste(.libPaths(), collapse = .Platform$path.sep)
-  withr::with_envvar(c(R_LIBS = libs, R_LIBS_USER = libs), {
-    quarto::quarto_render(
-      src, execute_params = list(store = normalizePath(store, winslash = "/")), quiet = FALSE
-    )
-  })
-  sub("\\.qmd$", ".html", src)
+  log <- file.path(out_dir, "render_error.log")
+  unlink(log)
+  params <- list(store = normalizePath(store, winslash = "/"),
+                 root = normalizePath(".", winslash = "/"))
+  withr::with_envvar(c(R_LIBS = libs, R_LIBS_USER = libs), tryCatch(
+    quarto::quarto_render(src, execute_params = params, quiet = FALSE),
+    error = function(e) {
+      # targets shortens error messages, which cuts off the R error inside the Quarto output
+      msg <- c(conditionMessage(e), e$stderr)
+      p <- e$parent
+      while (!is.null(p)) {
+        msg <- c(msg, "", conditionMessage(p), p$stderr, p$stdout)
+        p <- p$parent
+      }
+      writeLines(as.character(unlist(msg)), log)
+      stop("Quarto rendering failed; full output in ", log, call. = FALSE)
+    }
+  ))
+  html <- sub("\\.qmd$", ".html", basename(qmd))
+  out <- file.path(out_dir, html)
+  if (!file.copy(file.path(tmp, html), out, overwrite = TRUE)) {
+    cli::cli_abort("Could not write {out} (is it open or locked?).")
+  }
+  out
 }

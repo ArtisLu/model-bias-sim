@@ -86,7 +86,9 @@ record_run_settings <- function(sims) {
 observed_workers <- function(meta) {
   # Branches of the simulation patterns (branch-name hashes differ between targets versions)
   is_branch <- if ("type" %in% names(meta)) meta$type == "branch" else TRUE
-  m <- meta[is_branch & grepl("^(sim_results|truth)_", meta$name), ]
+  heavy <- paste0("^(sim_results|truth_rows|calib_rows_[0-9]|belt_truth_rows|belt_anchor_rows|",
+                  "belt_sims_[0-9])_")
+  m <- meta[is_branch & grepl(heavy, meta$name), ]
   if (nrow(m) == 0) return(NA_integer_)
   st <- as.numeric(m$time) - m$seconds
   en <- as.numeric(m$time)

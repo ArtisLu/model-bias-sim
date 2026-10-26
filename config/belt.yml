@@ -3,27 +3,36 @@
 # Profiles follow R_CONFIG_ACTIVE; a profile not listed here uses `default`.
 
 default:
-  B: 5000            # replicates per extra grid point (theta* and 0 reuse the main replicates)
-  truth_n_rep: 12    # large datasets per grid truth (truth MCSE ~0.007 log-HR)
-  degree: 2          # polynomial in psi for the quantile curves of T
-  datasets:
-    # Extra theta values; together with theta* and 0 they span the psi range where CI endpoints
-    # of the observed study and of the checked replicates fall
-    maringe:
-      theta_extra: [-3.4, -2.6, -2.0, -1.5, -1.1, -0.35, 0.45, 1.0, 1.6]
-    synpuf:
-      theta_extra: [-0.6, -0.1, 0.3, 1.0, 1.4, 1.9]
+  # Grid: Chebyshev-Lobatto nodes in psi over the range where CI endpoints fall (observed CI and
+  # the tail quantiles of the main replicates' Wald endpoints), mapped to theta via psi(theta)
+  n_nodes: 5         # nodes; together with theta* and 0 they carry the quantile curves
+  tail: 0.005        # share of replicate endpoints allowed beyond the range, per side
+  expand: 0.1        # widening of the range on each side (belt endpoints differ from Wald)
+  min_gap: 0.05      # psi distance below which a node is dropped in favour of a main scenario
+  bound: 4           # nodes lie within |theta| <= bound; psi is evaluated at +-bound and +-bound / 2
+  anchor_n_rep: 3    # large datasets per anchor (they only place the nodes)
+  # Adaptive replicates per node: B_start first, then batches until the 2.5% and 97.5%
+  # quantiles of T reach target_mcse (theta* and 0 reuse the main replicates)
+  B_start: 1000
+  B_max: 5000
+  target_mcse: 0.05
+  truth_n_rep: 12    # large datasets per node truth (truth MCSE ~0.007 log-HR)
+  # Cubic: leave-one-node-out checks at B = 100,000 showed the quadratic too stiff (q_lo off by
+  # 0.1 at theta*); only refits the belt, its grid and replicates are unaffected (_targets.R)
+  degree: 3          # polynomial in psi for the quantile curves of T
 
 smoke:
-  B: 20
+  n_nodes: 3
+  anchor_n_rep: 1
+  B_start: 10
+  B_max: 20
+  target_mcse: 0.01
   truth_n_rep: 1
   degree: 1
-  datasets:
-    maringe:
-      theta_extra: [-1.6, 0.8]
-    synpuf:
-      theta_extra: [0.2, 1.2]
 
 b100k:
-  B: 10000
+  # Grid quantile error is the main Monte Carlo error of the belt coverage check: at 0.035
+  # (B_max 10,000) coverage was 94.7% / 95.1%; 0.02 needs up to ~30,000 replicates per node
+  B_max: 30000
+  target_mcse: 0.02
   truth_n_rep: 24
