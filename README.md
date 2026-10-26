@@ -33,7 +33,8 @@ renv::snapshot()
 # every run
 testthat::test_dir("tests/testthat")                         # unit tests (~10 s)
 Sys.setenv(R_CONFIG_ACTIVE = "smoke"); targets::tar_make()   # smoke run (~30 s)
-Sys.unsetenv("R_CONFIG_ACTIVE"); targets::tar_make()         # full run (B = 10,000)
+Sys.setenv(R_CONFIG_ACTIVE = "b100k")                        # paper run (B = 100,000)
+targets::tar_make(store = "_targets_b100k")
 source("reports/paper/build_section4.R")                     # Word draft of paper Section 4
 ```
 
@@ -44,18 +45,22 @@ on the number of workers. Each large dataset behind a true value is its own bran
 steps, true values and confidence-belt truths also spread over the workers; only the 2–4 calibration
 steps follow each other. Large datasets need ~1.5 GB each, so the number of workers is limited by memory.
 
-**More replicates.** `B` (replicates per scenario) is in `config/config.yml`. For a precision check
-without touching the paper run, use the `b100k` profile (100,000 per scenario and 96 instead of 24 large
-datasets for the true value, which halves its Monte Carlo error) with its own store;
-figures, report and Word draft go to `reports/b100k/` (the paper outputs in `reports/` are untouched):
+**Paper run and profiles.** The paper reports the `b100k` profile: 100,000 replicates per scenario,
+96 large datasets per true value, and confidence-belt grid points topped up to a quantile MCSE of 0.02
+(up to 30,000 replicates each). It has its own store; figures, report and Word draft go to
+`reports/b100k/`. The default profile (B = 10,000, outputs in `reports/`) is a faster run of the same
+design. `B` and the other settings are in `config/config.yml` and `config/belt.yml`.
 
 ```r
-Sys.setenv(R_CONFIG_ACTIVE = "b100k", QBA_WORKERS = parallel::detectCores() - 1)
+Sys.setenv(R_CONFIG_ACTIVE = "b100k", QBA_WORKERS = 3)  # ~1.5 GB RAM per worker
 targets::tar_make(store = "_targets_b100k")      # store name must be _targets_<profile>
 source("reports/paper/build_section4.R")         # -> reports/b100k/paper/section4_draft.docx
 targets::tar_read(performance_maringe, store = "_targets_b100k")
-Sys.unsetenv("R_CONFIG_ACTIVE")                  # back to the paper run
+Sys.unsetenv("R_CONFIG_ACTIVE")                  # back to the default profile
 ```
+
+The project folder may be synced (Dropbox): the report is rendered in a temporary folder for that
+reason. Excluding the `_targets*` stores from syncing avoids file locks and large uploads.
 
 Results of the 12 Oct 2026 run (Maringe, B = 10,000, R 4.3.3, 2 crew workers, UTF-8 locale): unzip
 `results/targets_store_2026-10-12_maringe.zip` here to get `_targets/`. `targets::tar_outdated()` is then

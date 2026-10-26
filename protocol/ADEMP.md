@@ -50,7 +50,7 @@ Maringe: classic CCW teaching example, already cited in the draft; small sample.
 
 ## P — Performance measures
 
-Per scenario: bias ± MCSE (including the truth's MC error), empirical SE, model SE and relative error, RMSE, 95% CI coverage, rejection rate of H0: HR = 1 (power in the observed-effect scenario, type I error in the null scenario, and its direction), failures/warnings. **B = 10,000** replicates per scenario (bias MCSE ≈ 0.002, coverage MCSE ≈ 0.2%). Failures are recorded and excluded; their count is reported.
+Per scenario: bias ± MCSE (including the truth's MC error), empirical SE, model SE and relative error, RMSE, 95% CI coverage, rejection rate of H0: HR = 1 (power in the observed-effect scenario, type I error in the null scenario, and its direction), failures/warnings. **B = 100,000** replicates per scenario for the paper (`b100k` profile; bias MCSE ≈ 0.002 including the truth's MC error from 96 large datasets, coverage MCSE ≈ 0.07%); the default profile (B = 10,000) runs the same design faster. Failures are recorded and excluded; their count is reported.
 
 ## Correction (paper Step 7)
 
@@ -75,4 +75,5 @@ Per scenario: bias ± MCSE (including the truth's MC error), empirical SE, model
 | 2026-10-24 | Calibration starts from θ̂ and 0 and evaluates each step's large datasets in parallel; evaluations reused for the true values (same seeds). Belt grid: Chebyshev–Lobatto nodes over the needed ψ range instead of a fixed θ list; adaptive replicates per node (target quantile MCSE) | Run time: the belt grid was about two thirds of the computing time and the calibration a serial bottleneck; estimands unchanged |
 | 2026-10-25 | Belt: no-effect grid point and coverage check at ψ(0) (CCW limit) instead of 0; nodes placed by a monotone spline with anchors at θ = ±2 and ±4 and limited to the reachable ψ range | Truth 0 at ψ = 0 put a kink in the quantile curves (lopsided misses, observed coverage 94.4%); ψ(θ) levels off for strong effects, so linear extrapolation misplaced the nodes |
 | 2026-10-25 | Belt quantile curves: cubic instead of quadratic; the degree no longer reruns the belt simulations | At B = 100,000 the quadratic missed the left-out q_lo at θ* by 0.10 (observed coverage 94.7%, misses 3.1% below / 2.3% above); cubic error ≤ 0.02 |
+| 2026-10-26 | Paper reports the b100k run (B = 100,000 per scenario) | Belt coverage check and bias precise enough to be read at the 0.1–0.2% level |
 | 2026-10-25 | Belt coverage MCSE by bootstrap including the grid's Monte Carlo error; b100k nodes to quantile MCSE 0.02 (up to 30,000 replicates) | The binomial MCSE (0.07%) ignored the grid quantile error (~0.03 per node), which dominates the check; observed 94.7% / null 95.1% at MCSE 0.035 |

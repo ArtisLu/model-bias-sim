@@ -1,5 +1,6 @@
 # Modelling-bias QBA simulation: all tunables live here (simulation_setup.md, Sec. 2).
-# Profiles: default = Maringe-only production run (paper); smoke = quick end-to-end check;
+# Profiles: b100k = paper run (100,000 replicates per scenario; store _targets_b100k, outputs in
+# reports/b100k/); default = 10,000-replicate run; smoke = quick end-to-end check;
 # two_datasets = Maringe + SynPUF comparison (R_CONFIG_ACTIVE=two_datasets).
 # Do not add keys lightly: every target depends on the config object.
 
@@ -80,8 +81,8 @@ smoke:
 two_datasets:
   active_datasets: ["maringe", "synpuf"]
 
-# Precision check: 100,000 replicates per scenario. Run into its own store so the paper run
-# stays intact: Sys.setenv(R_CONFIG_ACTIVE = "b100k"); targets::tar_make(store = "_targets_b100k")
+# Paper run (decided Oct 2026): 100,000 replicates per scenario, in its own store:
+# Sys.setenv(R_CONFIG_ACTIVE = "b100k"); targets::tar_make(store = "_targets_b100k")
 b100k:
   B: 100000
   batch_size: 1000     # 200 branches instead of 800; less overhead per branch
