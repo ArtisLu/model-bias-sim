@@ -1,0 +1,49 @@
+```{r ci-setup}
+targets::tar_load(c(ci_extra_obs_maringe, ci_methods_maringe, table_ci_methods_maringe, belt_maringe,
+                    belt_plan_maringe), store = store)
+cfg_belt_b <- config::get(file = file.path(root, "config", "belt.yml"))
+cr <- ci_extra_obs_maringe
+cim <- function(m, tg, src = NA) {
+  ci_methods_maringe[method == m & scenario == tg & (is.na(src) & is.na(source) | source %in% src)]
+}
+wo <- cim("Wald (robust SE)", "observed")
+wn <- cim("Wald (robust SE)", "null")
+bo <- cim("Confidence belt", "observed", "grid")
+bn <- cim("Confidence belt", "null", "grid")
+```
+
+The earlier design of the study (manuscript v0.62, nominal-coverage CIs by simulation) is kept as a comparison with the non-parametric adjustment of Section 4. It is built when `enabled: true` in `config/belt.yml`.
+
+**Bootstrap-t.** The 2.5% and 97.5% quantiles of $T = (\hat\psi - \psi)/\widehat{SE}$ over the studies at θ\* are `r f2(cr$t_q_lo)` and `r f2(cr$t_q_hi)` (instead of ±1.96); the CI is $[\hat\psi - q_{97.5}\widehat{SE},\ \hat\psi - q_{2.5}\widehat{SE}]$ around the unadjusted estimate (T already contains the bias). Observed result: HR `r hr(obs$estimate)` (`r ci(cr$ci_lo_boot_t, cr$ci_hi_boot_t)`), against Wald `r ci(obs$ci_lo, obs$ci_hi)` and the confidence belt `r ci(cr$ci_lo_belt, cr$ci_hi_belt)`.
+
+Both learned CIs are checked by cross-fitting (learned on half of the studies, checked on the other half), which is close to circular within a scenario. The informative check is *transfer*: learn the CI at one true effect, check it at the other.
+
+```{r tab-ci}
+#| tbl-cap: "Coverage of the 95% CIs, % (MCSE), and the share of CIs lying entirely below or above the truth (2.5% each expected). Confidence belt: coverage of the CCW large-sample limit, at no effect ψ(0) rather than 0."
+knitr::kable(table_ci_methods_maringe,
+             col.names = c("CI", "Checked at", "Learned from", "Coverage", "Below truth", "Above truth"),
+             align = "lllrrr")
+```
+
+```{r fig-ci}
+#| fig-cap: "Coverage and one-sided misses of the Wald, QBA-widened, bootstrap-t and confidence-belt CIs. Bars: 95% Monte Carlo interval. Dashed: nominal value."
+#| out-width: "100%"
+knitr::include_graphics(fig(grep("fig_ci_methods\\.png$", targets::tar_read(fig_ci_methods_maringe, store = store), value = TRUE)), error = FALSE)
+```
+
+- **Transfer:** bootstrap-t `r pct(cim("Bootstrap-t", "null", "observed")$coverage)` at no effect and `r pct(cim("Bootstrap-t", "observed", "null")$coverage)` at the observed effect; QBA widening `r pct(cim("QBA widening", "null", "observed")$coverage)` and `r pct(cim("QBA widening", "observed", "null")$coverage)`; Wald `r pct(wn$coverage)` and `r pct(wo$coverage)`.
+- $T$ is not fully pivotal: its quantiles shift with the true effect, so quantiles learned at one effect over-correct at the other.
+
+**Confidence belt (test inversion).** The quantiles of $T$ depend on the true value (Neyman construction):
+
+1. **Grid of true effects.** Besides θ\* and 0, the study is replayed at `r nrow(belt_maringe$quantiles) - 2` further values of θ, each with its own true value $\psi(\theta)$ (`r cfg_belt_b$truth_n_rep` large datasets). The grid points are Chebyshev–Lobatto nodes in ψ over the range where CI endpoints fall (observed CI and the outer `r pct(cfg_belt_b$tail)` of replicate Wald endpoints, widened by `r pct(cfg_belt_b$expand, 0)`), mapped to θ through a monotone spline of ψ(θ) through the true values and anchors at θ = ±`r cfg_belt_b$bound / 2` and ±`r cfg_belt_b$bound` (`r cfg_belt_b$anchor_n_rep` large datasets each). Each point gets `r n0(cfg_belt_b$B_start)` replays first (same seeds), then more until the Monte Carlo SE of both quantiles of $T$ is below `r cfg_belt_b$target_mcse` (at most `r n0(cfg_belt_b$B_max)`).
+2. **Quantile curves.** A weighted polynomial in $\psi$ (degree `r belt_maringe$degree`) smooths the 2.5% and 97.5% quantiles of $T$ across the grid.
+3. **Inversion.** The CI is every $\psi_0$ with $q_{2.5}(\psi_0) \le (\hat\psi - \psi_0)/\widehat{SE} \le q_{97.5}(\psi_0)$.
+
+```{r fig-belt}
+#| fig-cap: "Quantiles of T across the grid of true effects (points) and the smoothed curves used for inversion. Dashed: ±1.96."
+#| out-width: "70%"
+knitr::include_graphics(fig(grep("fig_belt\\.png$", targets::tar_read(fig_belt_maringe, store = store), value = TRUE)), error = FALSE)
+```
+
+**Check** (the checked grid point is dropped and the curves refitted; MCSEs by bootstrap over replays, including the Monte Carlo error of the grid quantiles): observed effect, coverage `r pct(bo$coverage)` (MCSE `r pct(bo$mcse)`), `r pct(bo$miss_below)` of CIs entirely below the truth and `r pct(bo$miss_above)` above; no effect, coverage of ψ(0) = `r f3(pn$psi_large_sample)` (HR `r hr(pn$psi_large_sample)`, the CCW limit when surgery has no effect) `r pct(bn$coverage)` (MCSE `r pct(bn$mcse)`), `r pct(bn$miss_below)` below and `r pct(bn$miss_above)` above. The belt targets ψ(0) rather than the convention 0 used for the type I error, so whether a belt CI excludes HR = 1 is not a test of no effect. `r pct(bo$share_outside, 0)` (observed) and `r pct(bn$share_outside, 0)` (no effect) of replay CIs have an endpoint beyond the grid (θ within ±`r cfg_belt_b$bound`), where the nearest quantile is used.

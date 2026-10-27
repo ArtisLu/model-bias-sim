@@ -1,6 +1,22 @@
 # Analysis pipelines under test: clone-censor-weight (CCW), one design per dataset.
 #   grace_vs_none:    Maringe et al. (2020), surgery within grace vs no surgery within grace.
 #   window_vs_window: Webster-Clark et al. (2025) tutorial, start within 90 vs within 30 days.
+# Endpoint (spec$endpoint): "hr" = log hazard ratio of the weighted Cox model (default);
+# "surv12" = difference in survival at spec$surv_time, from IPC-weighted proportions (Maringe only).
+
+#' Effect scale of an endpoint: labels and the direction that favours arm 1
+#' @param spec Pipeline spec.
+#' @return list(endpoint, scale, short, favours_low, null_value). `favours_low` is TRUE when a
+#'   smaller estimate favours arm 1 (log HR); FALSE for a survival difference.
+endpoint_info <- function(spec) {
+  ep <- if (is.null(spec$endpoint)) "hr" else spec$endpoint
+  checkmate::assert_choice(ep, c("hr", "surv12"))
+  switch(ep,
+    hr = list(endpoint = ep, scale = "log hazard ratio", short = "log HR", favours_low = TRUE),
+    surv12 = list(endpoint = ep, scale = "difference in 12-month survival",
+                  short = "survival difference", favours_low = FALSE)
+  )
+}
 
 #' Split clones into intervals at given breaks
 #' @param clones Clone rows of one arm.
@@ -48,11 +64,53 @@ fit_outcome <- function(long, spec, robust) {
 run_pipeline <- function(data, spec, robust = TRUE) {
   checkmate::assert_data_table(data)
   checkmate::assert_choice(spec$design, c("grace_vs_none", "window_vs_window"))
+  ep <- endpoint_info(spec)$endpoint
   long <- switch(spec$design,
     grace_vs_none = ccw_grace_vs_none(data, spec),
     window_vs_window = ccw_window_vs_window(data, spec)
   )
-  fit_outcome(long, spec, robust)
+  switch(ep,
+    hr = fit_outcome(long, spec, robust),
+    surv12 = fit_survival_difference(long, spec)
+  )
+}
+
+#' Difference in survival at a fixed time from the CCW clones (binary endpoint)
+#' Hajek estimator per arm: sum(w * alive) / sum(w) over clones still uncensored at the time, with
+#' the weight each clone has at the end of its follow-up (the same IPC weights as the Cox model).
+#' The SE sums the arm-wise influence functions within patient (the two clones of a patient are
+#' dependent), treating the weights as known, like the cluster-robust SE of the Cox model.
+#' @param long Stacked long data (id, arm, start, stop, ev, w); @param spec Pipeline spec.
+#' @return One-row data.table in the pipeline contract format; estimate = S(arm 1) - S(arm 0).
+fit_survival_difference <- function(long, spec) {
+  checkmate::assert_number(spec$surv_time, lower = 0)
+  checkmate::assert_choice(spec$design, "grace_vs_none")
+  t_s <- spec$surv_time
+  # One row per clone: its last interval carries the end of follow-up and the final weight
+  last <- long[long[, .I[.N], by = .(id, arm)]$V1]
+  last[, `:=`(
+    observed = as.integer(ev == 1L | stop >= t_s),
+    alive = as.integer(stop >= t_s)
+  )]
+  last <- last[observed == 1L]
+  arm_fit <- function(a) {
+    x <- last[arm == a]
+    s <- sum(x$w * x$alive) / sum(x$w)
+    x[, infl := w * (alive - s) / sum(w)]
+    list(s = s, infl = x[, .(id, infl)])
+  }
+  f1 <- arm_fit(1L)
+  f0 <- arm_fit(0L)
+  infl <- merge(f1$infl, f0$infl, by = "id", all = TRUE, suffixes = c("1", "0"))
+  infl[is.na(infl1), infl1 := 0][is.na(infl0), infl0 := 0]
+  est <- f1$s - f0$s
+  se <- sqrt(sum((infl$infl1 - infl$infl0)^2))
+  z <- stats::qnorm(1 - (1 - spec$conf_level) / 2)
+  data.table::data.table(
+    estimate = est, se = se, ci_lo = est - z * se, ci_hi = est + z * se,
+    p_value = 2 * stats::pnorm(-abs(est / se)), n_events = sum(long$ev),
+    status = "ok", message = NA_character_
+  )
 }
 
 # ---- Maringe design ------------------------------------------------------------
