@@ -46,11 +46,15 @@ targets::tar_make(store = "_targets_b100k")
 source("reports/paper/build_section4.R")                     # Word draft of paper Section 4
 ```
 
-**Run time and parallel runs.** Measured on a 4-core Windows laptop with 3 crew workers (22 Oct 2026):
-about 0.17 s per CCW analysis of 200 patients (0.4 s while all cores are busy). The default run takes
-about 10–11 hours elapsed, roughly 30 CPU-hours: inverse calibration 1 hour (sequential, 4 steps of 2,000
-studies), nested simulation about 27 CPU-hours (outer datasets at θ\* ~130 s each, with no effect ~65 s
-each), the 2 × 10,000 main and 2 × 10,000 check studies about 2 CPU-hours, true values well under 1.
+**Run time and parallel runs.** Measured on a 4-core Windows laptop with 3 crew workers (22 Oct 2026, v0.64
+code): about 0.17 s per CCW analysis of 200 patients (0.4 s while all cores are busy). Since v0.65 (timed on a
+2-core Linux server, 27 Oct 2026; analysis 0.04 s): inverse calibration takes 2–3 evaluations of the mean
+estimate (about 100–160 s with `B: 2000`), the nested simulation costs
+about 5.3 CPU-hours at 1,250 outer × 50 inner (one outer dataset about 15 s at the default sizes; no effect
+about half), and the pilot of the outer / inner split about 15 CPU-minutes per endpoint. The main and
+check studies and the true values scale with `B` and `truth: n_rep` (`b100k`: ten times and four times the
+default). Scale the figures to your machine with the timing targets
+(`pilot_timing_<ds>`).
 With `crew` installed, branches run on parallel local workers (default 2, `workers` in
 `config/config.yml`); `Sys.setenv(QBA_WORKERS = parallel::detectCores() - 1)` before `tar_make()` uses
 more cores without editing the config. Results do not depend on the number of workers. Each large
@@ -62,7 +66,8 @@ depends on it. For the CCW and simple-adjustment results without waiting for the
 keeps everything already built, including finished nested branches.
 
 **Pilot study and outer / inner split (paper Appendix).** The targets `pilot_nested_<ds>`, `pilot_timing_<ds>`,
-`allocation_<ds>` and `pilot_anova_<ds>` run `pilot:` (50 outer × 50 inner by default) and give k = σ_w²/V,
+`allocation_<ds>`, `pilot_anova_<ds>` and `pilot_limits_<ds>` (width of the inner-run CI limits against the number
+of inner runs) run `pilot:` (50 outer × 50 inner by default) and give k = σ_w²/V,
 the costs of an outer replicate and of an inner run, R\*, the outer runs for the target precision and the
 cost of the configured design (`R/allocation.R`). Run them first
 (`targets::tar_make(names = starts_with("allocation_"))`), then set `nested: outer` and `inner` in
