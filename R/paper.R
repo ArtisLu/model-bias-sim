@@ -102,7 +102,7 @@ make_baseline_table <- function(raw, ds, spec) {
   tb
 }
 
-#' Weibull outcome and censoring model parameters (supplementary table)
+#' Outcome and censoring model parameters (supplementary table; Weibull or generalized gamma)
 #' @param dgm Fitted DGM with `cens` element; @param spec Dataset config (outcome label).
 #' @return data.table: model, term, hr, ci (text), n_events.
 make_dgm_table <- function(dgm, spec) {
@@ -126,8 +126,17 @@ make_dgm_table <- function(dgm, spec) {
     lb <- ifelse(terms %in% names(lab), lab[terms], terms)
     f2 <- function(x) formatC(x, format = "f", digits = 2)
     f4 <- function(x) formatC(x, format = "f", digits = 4)
+    shape <- if (identical(m$family, "gengamma")) {
+      data.table::data.table(
+        model = model, term = c("Generalized gamma scale (sigma)", "Generalized gamma shape (Q)"),
+        hr = c(f2(m$sigma), f2(m$Q)),
+        ci = c("", paste0(f2(m$Q - 1.96 * m$se[["Q"]]), " to ", f2(m$Q + 1.96 * m$se[["Q"]])))
+      )
+    } else {
+      data.table::data.table(model = model, term = "Weibull shape (rho)", hr = f2(m$rho), ci = "")
+    }
     rbind(
-      data.table::data.table(model = model, term = "Weibull shape (rho)", hr = f2(m$rho), ci = ""),
+      shape,
       data.table::data.table(
         model = model, term = unname(lb), hr = f4(exp(b)),
         ci = paste0(f4(exp(b - 1.96 * se)), " to ", f4(exp(b + 1.96 * se)))
@@ -267,55 +276,80 @@ save_ci_figure <- function(ci, dir) {
   c(png, eps)
 }
 
+#' Display scale of an endpoint: log HR is shown as HR; a survival difference in percentage points
+#' @param spec Dataset config. @return list(hr, k, unit, est, ci) with formatters.
+display_scale <- function(spec) {
+  ep <- endpoint_info(spec$pipeline)
+  f <- function(x, d) formatC(x, format = "f", digits = d)
+  if (ep$endpoint == "hr") {
+    list(
+      hr = TRUE, k = 1, unit = "log HR", name = "HR",
+      est = function(e) f(exp(e), 4),
+      ci = function(e, lo, hi) paste0(f(exp(e), 4), " (", f(exp(lo), 4), " to ", f(exp(hi), 4), ")")
+    )
+  } else {
+    list(
+      hr = FALSE, k = 100, unit = "percentage points", name = "survival difference",
+      est = function(e) f(100 * e, 2),
+      ci = function(e, lo, hi) paste0(f(100 * e, 2), " (", f(100 * lo, 2), " to ", f(100 * hi, 2), ")")
+    )
+  }
+}
+
 #' Observed analysis, calibration, adjustments and performance in one list of tables
 #' @param obs Observed pipeline result; @param dgm Fitted DGM.
 #' @param cal From `calibrate_observed()`.
 #' @param truth_table,performance,adj,perf,nested Pipeline targets for one dataset
 #'   (`perf` from `compare_performance()`, `nested` from `summarise_nested()`).
 #' @param spec Dataset config (`arm1` names the strategy coded 1).
-#' @return list(analysis, performance, ci_variants, dgm), each a data.table.
+#' @return list(analysis, performance, ci_variants, dgm), each a data.table. Estimates, biases, SEs
+#'   and RMSE are shown on the display scale of the endpoint (HR, or percentage points for the
+#'   survival difference); MSE = RMSE^2 in the squared unit of the log HR or of percentage points.
 make_results_table <- function(obs, dgm, cal, truth_table, performance, adj, perf, nested, spec) {
+  ds <- display_scale(spec)
   f2 <- function(x) formatC(x, format = "f", digits = 2)
   f3 <- function(x) formatC(x, format = "f", digits = 3)
   f4 <- function(x) formatC(x, format = "f", digits = 4)
   pc <- function(x, d = 1) formatC(100 * x, format = "f", digits = d)
-  # HRs and their CIs with 4 decimals, type I error with 3 (percent)
-  hr_ci <- function(e, lo, hi) paste0(f4(exp(e)), " (", f4(exp(lo)), " to ", f4(exp(hi)), ")")
-  est_mc <- function(v, mc) paste0(f3(v), " (", f3(mc), ")")
+  # Log-scale quantities (log HR) keep their natural scale; survival differences are in points
+  sc <- function(x, d = 3) formatC(ds$k * x, format = "f", digits = d)
+  est_mc <- function(v, mc) paste0(sc(v), " (", sc(mc), ")")
   po <- performance[scenario == "observed"]
   pn <- performance[scenario == "null"]
   tn <- truth_table[scenario == "null"]
   ns <- nested$summary
+  nm <- ds$name
+  lim <- function(e) if (ds$hr) f4(exp(e)) else f2(100 * e)
   analysis <- data.table::data.table(
     item = c(
-      "Observed CCW HR (95% CI)", "Observed p-value",
-      "Weibull outcome model: on-treatment HR (exp(theta-hat))",
+      paste0("Observed CCW ", nm, " (95% CI)"), "Observed p-value",
+      "Prediction model: on-treatment HR (exp(theta-hat))",
       "Calibrated generating HR, exp(theta*), with mean CCW estimate = observed",
-      "Mean CCW HR at theta* over the simulated studies (MCSE of log HR)",
-      "True CCW HR at theta*, exp(psi(theta*)) (MCSE of psi)",
-      "Bias at theta*, log HR (MCSE)",
-      "Large-sample CCW HR with no treatment effect, exp(psi(0))",
-      "QBA-adjusted HR, simple adjustment (non-parametric 95% CI)",
-      "QBA-adjusted HR, nested simulation (non-parametric 95% CI)",
-      "QBA-adjusted HR, parametric 95% CI (CI inflation factor)",
-      "Non-parametric 5% test: H0 rejected if CCW HR is below / above",
+      paste0("Mean CCW estimate at theta* over the simulated studies (MCSE, ", ds$unit, ")"),
+      paste0("True CCW value at theta*, psi(theta*) (MCSE of psi, ", ds$unit, ")"),
+      paste0("Bias at theta*, ", ds$unit, " (MCSE)"),
+      paste0("Large-sample CCW value with no treatment effect, psi(0)"),
+      paste0("QBA-adjusted ", nm, ", simple adjustment (non-parametric 95% CI)"),
+      paste0("QBA-adjusted ", nm, ", nested simulation (non-parametric 95% CI)"),
+      paste0("QBA-adjusted ", nm, ", parametric 95% CI (CI inflation factor)"),
+      paste0("Non-parametric 5% test: H0 rejected if CCW estimate is below / above"),
       "Simulation-calibrated p-value (non-parametric)",
       "Nested: SD of the estimated bias correction across outer datasets (within MC error)"
     ),
     value = c(
-      hr_ci(obs$estimate, obs$ci_lo, obs$ci_hi),
+      ds$ci(obs$estimate, obs$ci_lo, obs$ci_hi),
       formatC(obs$p_value, format = "f", digits = 3),
       f4(exp(dgm$theta_hat)), f4(exp(cal$theta_cal)),
-      paste0(f4(exp(adj$mean_est)), " (", f3(adj$mean_est_mcse), ")"),
-      paste0(f4(exp(adj$truth)), " (", f3(adj$truth_mcse), ")"),
+      paste0(lim(adj$mean_est), " (", f3(ds$k * adj$mean_est_mcse), ")"),
+      paste0(lim(adj$truth), " (", f3(ds$k * adj$truth_mcse), ")"),
       est_mc(adj$bias, adj$bias_mcse),
-      f4(exp(tn$psi_large_sample)),
-      hr_ci(adj$est_adj, adj$ci_lo_np, adj$ci_hi_np),
-      hr_ci(adj$est_adj, ns$ci_lo_np, ns$ci_hi_np),
-      paste0(hr_ci(adj$est_adj, adj$ci_lo_par, adj$ci_hi_par), "; k = ", f2(adj$se_inflation)),
-      paste0(f4(exp(adj$null_mean + adj$null_q_lo)), " / ", f4(exp(adj$null_mean + adj$null_q_hi))),
+      lim(tn$psi_large_sample),
+      ds$ci(adj$est_adj, adj$ci_lo_np, adj$ci_hi_np),
+      ds$ci(adj$est_adj, ns$ci_lo_np, ns$ci_hi_np),
+      paste0(ds$ci(adj$est_adj, adj$ci_lo_par, adj$ci_hi_par), "; k = ", f2(adj$se_inflation)),
+      paste0(lim(adj$null_mean + adj$null_q_lo), " / ", lim(adj$null_mean + adj$null_q_hi)),
       formatC(adj$p_np, format = "f", digits = 3),
-      paste0(f3(ns$bias_r_sd), " (", f3(ns$bias_r_within_mcse), ")")
+      paste0(sc(ns$bias_r_sd), " (", sc(ns$bias_r_within_mcse), ")")
     )
   )
   cols <- list(
@@ -336,7 +370,7 @@ make_results_table <- function(obs, dgm, cal, truth_table, performance, adj, per
   }
   plain <- function(fun) vapply(names(cols), function(col) fun(col), character(1))
   rel_bias <- plain(function(col) {
-    pc(get(col, "Bias (log HR)")$value / get(col, "Empirical SE")$value)
+    pc(get(col, "Bias")$value / get(col, "Empirical SE")$value)
   })
   misses <- plain(function(col) {
     paste0(pc(get(col, "CI entirely below truth")$value), " / ",
@@ -346,6 +380,16 @@ make_results_table <- function(obs, dgm, cal, truth_table, performance, adj, per
     r <- get(col, "Rejections favouring arm 1")
     if (is.null(r)) "" else pc(r$value, 3)
   })
+  # RMSE and MSE with MCSE on the display scale (MSE scales with k^2)
+  rmse_mc <- plain(function(col) {
+    r <- get(col, "RMSE")
+    paste0(sc(r$value), " (", sc(r$mcse), ")")
+  })
+  mse_mc <- plain(function(col) {
+    r <- get(col, "MSE")
+    paste0(formatC(ds$k^2 * r$value, format = "f", digits = if (ds$hr) 4 else 2), " (",
+           formatC(ds$k^2 * r$mcse, format = "f", digits = if (ds$hr) 4 else 2), ")")
+  })
   n_sims <- c(
     ccw = paste0(format(po$B, big.mark = ","), " per scenario (", po$n_fail + pn$n_fail,
                  " failed)"),
@@ -354,20 +398,20 @@ make_results_table <- function(obs, dgm, cal, truth_table, performance, adj, per
                     " failed)")
   )
   rows <- list(
-    c("Mean estimate, log HR (true value)",
+    c(paste0("Mean estimate, ", ds$unit, " (true value)"),
       plain(function(col) {
         r <- get(col, "Mean estimate")
-        paste0(f3(r$value), " (", f3(r$ref), ")")
+        paste0(sc(r$value), " (", sc(r$ref), ")")
       })),
-    c("Bias, log HR (MCSE)", cell("Bias (log HR)", FALSE)),
+    c(paste0("Bias, ", ds$unit, " (MCSE)"), cell("Bias", FALSE)),
     c("Relative bias, % of empirical SE", rel_bias),
     c("Empirical SE (MCSE)", cell("Empirical SE", FALSE)),
-    c("Model-based (robust) SE", f3(po$mod_se), "", ""),
+    c("Model-based (robust) SE", sc(po$mod_se, 3), "", ""),
     c("Relative error in model SE, %", pc(po$rel_err_modse), "", ""),
-    c("RMSE", plain(function(col) f3(get(col, "RMSE")$value))),
+    c("RMSE (MCSE)", rmse_mc),
+    c(paste0("MSE = RMSE^2 (MCSE), ", ds$unit, "^2"), mse_mc),
     c("95% CI coverage, % (MCSE)", cell("95% CI coverage", TRUE)),
     c("CI entirely below / above the true value, %", misses),
-    c("Power, % (true effect at theta*)", cell("Power", TRUE)),
     c("Type I error, % (no effect)", cell("Type I error", TRUE, 3)),
     c(paste0("Rejections favouring ", spec$arm1, ", % (no effect)"), favour),
     c("Simulated studies", n_sims)
@@ -422,11 +466,11 @@ main_analyses <- function(perf) {
          (analysis %in% c("Simple adjustment", "Nested adjustment") & method == "Non-parametric")]
 }
 
-#' Figure: bias, coverage, type I error and power of CCW, simple and nested adjustment
+#' Figure: bias, RMSE, MSE, coverage and type I error of CCW, simple and nested adjustment
 #' @param perf From `compare_performance()`.
 #' @return ggplot (points +- 1.96 MCSE).
 plot_paper_performance <- function(perf) {
-  ms <- c("Bias (log HR)", "95% CI coverage", "Type I error", "Power")
+  ms <- c("Bias", "RMSE", "MSE", "95% CI coverage", "Type I error")
   d <- main_analyses(perf)[measure %in% ms]
   d[, measure := factor(measure, levels = ms)]
   d[, analysis := factor(analysis, levels = names(paper_cols))]
@@ -446,7 +490,7 @@ plot_paper_performance <- function(perf) {
 #' Figure: simulated estimates at theta* and with no effect, with true values and test limits
 #' @param sim_results Replicates; @param adj From `adjust_simple()`.
 #' @return ggplot.
-plot_paper_distribution <- function(sim_results, adj) {
+plot_paper_distribution <- function(sim_results, adj, xlab = "Estimated log HR") {
   # Unicode escape keeps the source ASCII; the theta panel is the calibrated scenario
   p1 <- "Generating effect \u03b8*"
   p2 <- "No treatment effect"
@@ -474,14 +518,15 @@ plot_paper_distribution <- function(sim_results, adj) {
                  "Rejection limits (5% test)" = "dotted"),
       name = "Reference:"
     ) +
-    ggplot2::labs(x = "Estimated log HR", y = "Number of simulated studies") +
+    ggplot2::labs(x = xlab, y = "Number of simulated studies") +
     theme_paper()
 }
 
 #' Figure: nested simulation, estimated bias correction and adjusted estimate per outer dataset
 #' @param nested_obs Outer replicates at theta*; @param adj From `adjust_simple()`.
+#' @param xlab Axis label of the estimate scale.
 #' @return ggplot.
-plot_nested <- function(nested_obs, adj) {
+plot_nested <- function(nested_obs, adj, xlab = "log HR") {
   p1 <- "Estimated bias correction"
   p2 <- "Bias-adjusted estimate"
   ref <- "Simple adjustment (left) / true value (right)"
@@ -504,35 +549,44 @@ plot_nested <- function(nested_obs, adj) {
                                  name = "Reference:") +
     ggplot2::scale_linetype_manual(values = stats::setNames(c("solid", "dashed"), c(ref, avg)),
                                    name = "Reference:") +
-    ggplot2::labs(x = "log HR", y = "Number of outer datasets") +
+    ggplot2::labs(x = xlab, y = "Number of outer datasets") +
     theme_paper()
 }
 
-#' Marginal survival implied by a Weibull model with time-varying treatment
-#' @param m Fitted Weibull list; @param data Base data; @param times Time grid.
+#' Marginal survival implied by the fitted PH model (Weibull or generalized gamma baseline)
+#' @param m Fitted model list; @param data Base data; @param times Time grid.
 #' @return Numeric vector: mean over patients of S_i(t).
-weibull_marginal_surv <- function(m, data, times) {
+dgm_marginal_surv <- function(m, data, times) {
   X <- dgm_design(data, m$covariates)
   eh <- exp(m$alpha + drop(X %*% m$gamma))
+  h0 <- if (identical(m$family, "gengamma")) {
+    function(t) gg_cumhaz0(t / m$tau, m$sigma, m$Q)
+  } else {
+    function(t) t^m$rho
+  }
   vapply(times, function(t) {
     pre <- pmin(data$s, t)
-    H <- eh * (pre^m$rho + (data$s < t) * exp(m$theta_hat) * (t^m$rho - pre^m$rho))
+    H <- eh * (h0(pre) + (data$s < t) * exp(m$theta_hat) * (h0(t) - h0(pre)))
     mean(exp(-H))
   }, numeric(1))
 }
 
-#' Figure: fit of the Weibull outcome and censoring models (Kaplan-Meier vs model)
+#' @rdname dgm_marginal_surv
+weibull_marginal_surv <- dgm_marginal_surv
+
+#' Figure: fit of the outcome and censoring models (Kaplan-Meier vs model)
 #' @param data Base data; @param dgm Fitted DGM; @param spec Dataset config (outcome label).
 #' @return ggplot.
 plot_paper_fit <- function(data, dgm, spec) {
   times <- seq(0, max(data$time), length.out = 200)
+  lab_m <- if (identical(dgm$family, "gengamma")) "Generalized gamma model" else "Weibull model"
   km <- function(status, panel) {
     f <- survival::survfit(survival::Surv(data$time, status) ~ 1)
     data.table::data.table(time = c(0, f$time), surv = c(1, f$surv), what = "Kaplan-Meier", panel = panel)
   }
   wb <- function(m, panel) {
-    data.table::data.table(time = times, surv = weibull_marginal_surv(m, data, times),
-                           what = "Weibull model", panel = panel)
+    data.table::data.table(time = times, surv = dgm_marginal_surv(m, data, times),
+                           what = lab_m, panel = panel)
   }
   p1 <- spec$outcome_label
   p2 <- "Loss to follow-up"
@@ -541,10 +595,10 @@ plot_paper_fit <- function(data, dgm, spec) {
   d[, panel := factor(panel, levels = c(p1, p2))]
   ggplot2::ggplot(d, ggplot2::aes(time, surv, colour = what, linetype = what)) +
     ggplot2::geom_step(data = d[what == "Kaplan-Meier"], linewidth = 0.9) +
-    ggplot2::geom_line(data = d[what == "Weibull model"], linewidth = 0.9) +
+    ggplot2::geom_line(data = d[what == lab_m], linewidth = 0.9) +
     ggplot2::facet_wrap(~panel, scales = "free_y") +
-    ggplot2::scale_colour_manual(values = c("Kaplan-Meier" = "black", "Weibull model" = "red"), name = NULL) +
-    ggplot2::scale_linetype_manual(values = c("Kaplan-Meier" = "solid", "Weibull model" = "dashed"), name = NULL) +
+    ggplot2::scale_colour_manual(values = stats::setNames(c("black", "red"), c("Kaplan-Meier", lab_m)), name = NULL) +
+    ggplot2::scale_linetype_manual(values = stats::setNames(c("solid", "dashed"), c("Kaplan-Meier", lab_m)), name = NULL) +
     ggplot2::labs(x = "Days since time zero", y = "Proportion free of the event") +
     theme_paper() +
     ggplot2::theme(legend.position = "bottom")
@@ -557,10 +611,13 @@ plot_paper_fit <- function(data, dgm, spec) {
 #' @return Character vector of file paths.
 save_paper_figures <- function(perf, sim_results, nested_obs, data, dgm, adj, spec, dir) {
   dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+  xl <- endpoint_info(spec$pipeline)
+  xl <- if (xl$endpoint == "hr") "log HR" else "Difference in 12-month survival"
   figs <- list(
-    fig_performance = list(plot_paper_performance(perf), 13, 4.4),
-    fig_distribution = list(plot_paper_distribution(sim_results, adj), 12, 4.6),
-    fig_nested = list(plot_nested(nested_obs, adj), 12, 4.6),
+    fig_performance = list(plot_paper_performance(perf), 15, 4.4),
+    fig_distribution = list(plot_paper_distribution(sim_results, adj, paste("Estimated", xl)),
+                            12, 4.6),
+    fig_nested = list(plot_nested(nested_obs, adj, xl), 12, 4.6),
     fig_model_fit = list(
       plot_paper_fit(data, dgm, spec), if (identical(dgm$cens$model, "weibull")) 10 else 6, 4.6
     )

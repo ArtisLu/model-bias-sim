@@ -64,13 +64,14 @@ test_that("results tables and figures are built from the adjustment outputs", {
   val <- validate_adjustment(adj, copy(sim)[, estimate := estimate + rnorm(.N, 0, 0.01)], tt)
   nest_o <- data.table(estimate = rnorm(30, -0.48, 0.28), se = 0.27, bias_r = rnorm(30, -0.015, 0.01),
                        mean_inner_mcse = 0.018, truth_r_mcse = 0.01, n_inner_ok = 250, n_eval = 2,
-                       at_bound = 0, theta_r = -0.7, seconds = 1, status = "ok")
+                       at_bound = 0, theta_r = -0.7, seconds = 1, status = "ok",
+                       mean_inner = rnorm(30, -0.48, 0.28))
   nest_o[, est_adj := estimate - bias_r]
   nest_o[, `:=`(ci_lo_np = est_adj - 0.55, ci_hi_np = est_adj + 0.55, ci_lo_np_refl = est_adj - 0.56,
                 ci_hi_np_refl = est_adj + 0.54)]
   nest_n <- data.table(estimate = rnorm(30, 0, 0.28), se = 0.27, reject = rbinom(30, 1, 0.05),
                        n_inner_ok = 250, seconds = 1, status = "ok")
-  nest_n[, reject_lower := reject * (estimate < 0)]
+  nest_n[, reject_fav := reject * (estimate < 0)]
   ns <- summarise_nested(nest_o, nest_n, tt, adj)
   perf <- compare_performance(sim, tt, val, ns)
   expect_setequal(unique(main_analyses(perf)$analysis), names(paper_cols))
@@ -79,11 +80,23 @@ test_that("results tables and figures are built from the adjustment outputs", {
                                       se = c(age_c = 0.05, theta = 0.2), rho = 1.3, n_events = 48,
                                       cens = list(model = "none")),
                             list(theta_cal = -0.7), tt, perfm, adj, perf, ns,
-                            list(arm1 = "surgery", outcome_label = "Death", dgm = list(age_unit = 5)))
+                            list(arm1 = "surgery", outcome_label = "Death", dgm = list(age_unit = 5),
+                                 pipeline = list(endpoint = "hr")))
   expect_named(tab, c("analysis", "performance", "ci_variants", "dgm"))
+  expect_true(all(c("RMSE (MCSE)", "MSE = RMSE^2 (MCSE), log HR^2") %in% tab$performance$measure))
+  expect_false(any(grepl("Power", tab$performance$measure)))
+  expect_false("Power" %in% unique(perf$measure))
   expect_named(tab$performance, c("measure", "ccw", "simple", "nested"))
   expect_true(all(nzchar(tab$analysis$value)))
   expect_s3_class(plot_paper_performance(perf), "ggplot")
   expect_s3_class(plot_paper_distribution(sim, adj), "ggplot")
   expect_s3_class(plot_nested(nest_o, adj), "ggplot")
+  # Survival-difference analysis: same tables, shown in percentage points
+  spec_sd <- list(arm1 = "surgery", outcome_label = "Death", dgm = list(age_unit = 5),
+                  pipeline = list(endpoint = "surv12"))
+  tab2 <- make_results_table(obs, list(theta_hat = -0.4, gamma = c(age_c = 0.1), se = c(age_c = 0.05, theta = 0.2),
+                                       rho = 1.3, n_events = 48, cens = list(model = "none")),
+                             list(theta_cal = -0.7), tt, perfm, adj, perf, ns, spec_sd)
+  expect_true(any(grepl("percentage points", tab2$analysis$item)))
+  expect_true("MSE = RMSE^2 (MCSE), percentage points^2" %in% tab2$performance$measure)
 })

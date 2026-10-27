@@ -50,33 +50,42 @@ replicate_estimates <- function(data, dgm, theta, seeds, pipeline) {
 }
 
 #' Inverse calibration: theta whose mean simulated estimate m(theta) equals a target (paper 2.7.1)
+#' The search starts at `start[1]` and stops there if m is already within `cc$tol` of the target.
 #' @param dgm Fitted DGM; @param data Base data; @param target Estimate to reproduce.
 #' @param seeds Replicate seeds, reused at every theta (CRN makes m(theta) smooth and monotone).
 #' @param pipeline Pipeline spec; @param cc List with max_iter, tol, bound.
-#' @param start First theta (and a second one when `slope` is NULL).
-#' @param slope Expected dm/dtheta; if given, the second point is a Newton step from `start`.
+#' @param start First theta (default `cc$start`); an optional second element is the second point.
+#' @param slope Expected dm/dtheta; if given, the second point is a Newton step from `start[1]`;
+#'   without it the second point is `start[2]` or, if absent, a unit-slope step.
 #' @return List: theta_cal, mean_est, mean_est_mcse, n_ok, estimates (at theta_cal), slope,
 #'   at_bound, n_eval, path.
-calibrate_mean <- function(dgm, data, target, seeds, pipeline, cc,
-                           start = c(dgm$theta_hat, dgm$theta_hat - 0.5), slope = NULL) {
+calibrate_mean <- function(dgm, data, target, seeds, pipeline, cc, start = cc$start, slope = NULL) {
   checkmate::assert_number(target)
+  checkmate::assert_numeric(start, min.len = 1, any.missing = FALSE)
   clamp <- function(x) max(-cc$bound, min(cc$bound, x))
   evals <- list()
   run_at <- function(th) {
     est <- replicate_estimates(data, dgm, th, seeds, pipeline)
     evals[[length(evals) + 1L]] <<- list(theta = th, m = mean(est, na.rm = TRUE), est = est)
   }
+  prior_slope <- if (is.null(slope)) 1 else slope
   last_slope <- function() {
     n <- length(evals)
+    if (n < 2L) return(prior_slope)
     s <- (evals[[n]]$m - evals[[n - 1L]]$m) / (evals[[n]]$theta - evals[[n - 1L]]$theta)
     # A flat or undefined secant (failed fits, same theta) falls back to the prior slope
-    if (is.finite(s) && abs(s) > 1e-8) s else if (is.null(slope)) 1 else slope
+    if (is.finite(s) && abs(s) > 1e-8) s else prior_slope
   }
-  if (is.null(slope)) {
-    for (th in start[1:2]) run_at(th)
-  } else {
-    run_at(start[1])
-    run_at(clamp(start[1] + (target - evals[[1]]$m) / slope))
+  run_at(clamp(start[1]))
+  if (is.finite(evals[[1]]$m) && abs(evals[[1]]$m - target) >= cc$tol) {
+    th2 <- if (!is.null(slope)) {
+      clamp(evals[[1]]$theta + (target - evals[[1]]$m) / slope)
+    } else if (length(start) >= 2L) {
+      start[2]
+    } else {
+      clamp(evals[[1]]$theta + (target - evals[[1]]$m))
+    }
+    if (abs(th2 - evals[[1]]$theta) > 1e-6) run_at(th2)
   }
   for (i in seq_len(cc$max_iter)) {
     n <- length(evals)
@@ -111,11 +120,15 @@ calibrate_mean <- function(dgm, data, target, seeds, pipeline, cc,
 #' @param dgm Fitted DGM; @param data Base data; @param obs_result Observed pipeline result.
 #' @param seeds CRN seeds of the main run (the first `cfg$calibration$B` are used).
 #' @param pipeline Pipeline spec; @param cfg Full config.
+#' @param slope,tol_scale Dataset-level guess of dm/dtheta (first Newton step) and the multiplier
+#'   of the tolerance for the scale of the estimate (`calib_slope`, `tol_scale` in the config).
 #' @return `calibrate_mean()` result without the replicate estimates, plus target.
-calibrate_observed <- function(dgm, data, obs_result, seeds, pipeline, cfg) {
+calibrate_observed <- function(dgm, data, obs_result, seeds, pipeline, cfg, slope = NULL,
+                               tol_scale = 1) {
   cc <- cfg$calibration
+  cc$tol <- cc$tol * tol_scale
   cal <- calibrate_mean(dgm, data, obs_result$estimate, seeds[seq_len(min(cc$B, length(seeds)))],
-                        pipeline, cc)
+                        pipeline, cc, slope = slope)
   cal$estimates <- NULL
   c(cal, list(target = obs_result$estimate, B = min(cc$B, length(seeds))))
 }

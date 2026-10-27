@@ -20,7 +20,8 @@ theme_qba <- function() {
 #' @param labels Named character vector: dataset key -> display label.
 #' @return ggplot.
 plot_estimates <- function(sim_all, perf_all, labels) {
-  po <- perf_all[scenario == "observed"]
+  # Hazard-ratio analyses only (the survival-difference analysis has its own figures)
+  po <- perf_all[scenario == "observed" & dataset %in% names(labels)]
   d <- merge(sim_all[!is.na(estimate)], po[, .(dataset, theta)], by = c("dataset", "theta"))
   lines <- rbind(
     po[, .(dataset, x = exp(truth), what = "True CCW HR at theta*")],
@@ -45,8 +46,8 @@ plot_estimates <- function(sim_all, perf_all, labels) {
 #' @param perf_all Stacked performance; @param labels Dataset key -> display label.
 #' @return ggplot.
 plot_comparison <- function(perf_all, labels) {
-  po <- perf_all[scenario == "observed"]
-  pn <- perf_all[scenario == "null"]
+  po <- perf_all[scenario == "observed" & dataset %in% names(labels)]
+  pn <- perf_all[scenario == "null" & dataset %in% names(labels)]
   d <- rbind(
     po[, .(dataset, metric = "Bias (% of SE), calibrated effect",
            value = 100 * std_bias, lo = 100 * (bias - 1.96 * bias_mcse_total) / emp_se,

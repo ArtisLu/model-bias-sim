@@ -16,9 +16,10 @@ centred_quantiles <- function(x, level = 0.95) {
 #' @param obs_result Observed pipeline result.
 #' @param sim_results Main replicates at the calibrated theta and at theta = 0.
 #' @param truth_table From `make_truth_table()`; @param dataset Dataset key.
-#' @param level Nominal level.
-#' @return One-row data.table on the log-HR scale.
-adjust_simple <- function(obs_result, sim_results, truth_table, dataset, level = 0.95) {
+#' @param level Nominal level; @param favours_low TRUE if a smaller estimate favours arm 1 (log HR).
+#' @return One-row data.table on the scale of the endpoint.
+adjust_simple <- function(obs_result, sim_results, truth_table, dataset, level = 0.95,
+                          favours_low = TRUE) {
   z <- stats::qnorm(1 - (1 - level) / 2)
   tt <- truth_table[scenario == "observed"]
   o <- sim_results[theta == tt$theta & !is.na(estimate)]
@@ -60,7 +61,7 @@ adjust_simple <- function(obs_result, sim_results, truth_table, dataset, level =
     # Two-sided p from the centred null distribution (equal tails, as the rejection limits)
     p_np = min(1, 2 * min(mean(e0 <= d_obs), mean(e0 >= d_obs))),
     z_crit_par = z_crit, z_obs_centred = z_obs, reject_par = z_obs > z_crit,
-    p_par = mean(z0 >= z_obs)
+    p_par = mean(z0 >= z_obs), favours_low = favours_low
   )
 }
 
@@ -68,32 +69,38 @@ adjust_simple <- function(obs_result, sim_results, truth_table, dataset, level =
 #' @param estimate,se Replicate estimates and model-based SEs; @param adj From `adjust_simple()`.
 #' @param level Nominal level.
 #' @return data.table: adjusted estimate, CIs (Wald, non-parametric, reflected, parametric) and
-#'   rejections of H0 (overall and favouring arm 1) under each rule.
+#'   rejections of H0 (overall `rej_*` and in the direction favouring arm 1 `fav_*`) per rule.
 apply_adjustment <- function(estimate, se, adj, level = 0.95) {
   z <- stats::qnorm(1 - (1 - level) / 2)
   ea <- estimate - adj$bias
   d0 <- estimate - adj$null_mean
+  lowside <- if (is.null(adj$favours_low)) TRUE else adj$favours_low
+  # Rejections in favour of arm 1: below the lower limit for a log HR, above the upper for a
+  # survival difference
+  fav <- function(lower, upper) if (lowside) lower else upper
   data.table::data.table(
     est_adj = ea,
     ci_lo_wald = estimate - z * se, ci_hi_wald = estimate + z * se,
     ci_lo_np = ea + adj$q_lo, ci_hi_np = ea + adj$q_hi,
     ci_lo_np_refl = ea - adj$q_hi, ci_hi_np_refl = ea - adj$q_lo,
     ci_lo_par = ea - z * adj$se_inflation * se, ci_hi_par = ea + z * adj$se_inflation * se,
-    rej_wald = abs(estimate / se) > z, low_wald = estimate / se < -z,
-    rej_np = d0 < adj$null_q_lo | d0 > adj$null_q_hi, low_np = d0 < adj$null_q_lo,
-    rej_par = abs(d0 / se) > adj$z_crit_par, low_par = d0 / se < -adj$z_crit_par
+    rej_wald = abs(estimate / se) > z, fav_wald = fav(estimate / se < -z, estimate / se > z),
+    rej_np = d0 < adj$null_q_lo | d0 > adj$null_q_hi,
+    fav_np = fav(d0 < adj$null_q_lo, d0 > adj$null_q_hi),
+    rej_par = abs(d0 / se) > adj$z_crit_par,
+    fav_par = fav(d0 / se < -adj$z_crit_par, d0 / se > adj$z_crit_par)
   )
 }
 
 #' Performance rows in long format (one analysis and CI/test variant)
 #' @param analysis,method Labels. @param est Estimates (adjusted where applicable).
 #' @param lo,hi CI limits (NULL: no coverage rows); @param truth True value.
-#' @param rej_alt Rejections at the calibrated effect (power); NULL to skip.
 #' @param rej_null,low_null Rejections and rejections favouring arm 1 with no effect.
 #' @param bias_extra_mcse MC error of the reference the bias is measured against.
-#' @return data.table: analysis, method, measure, value, mcse, ref, n.
-perf_rows <- function(analysis, method, est, lo = NULL, hi = NULL, truth, rej_alt = NULL,
-                      rej_null = NULL, low_null = NULL, bias_extra_mcse = 0) {
+#' @return data.table: analysis, method, measure, value, mcse, ref, n. Measures include RMSE and
+#'   MSE = RMSE^2 (MCSE as in rsimsum: sd of the squared errors / sqrt(n); delta method for RMSE).
+perf_rows <- function(analysis, method, est, lo = NULL, hi = NULL, truth, rej_null = NULL,
+                      low_null = NULL, bias_extra_mcse = 0) {
   prop <- function(measure, x, ref) {
     m <- mean(x)
     data.table::data.table(measure = measure, value = m, mcse = sqrt(m * (1 - m) / length(x)),
@@ -101,15 +108,19 @@ perf_rows <- function(analysis, method, est, lo = NULL, hi = NULL, truth, rej_al
   }
   n <- length(est)
   s <- stats::sd(est)
+  sq <- (est - truth)^2
+  mse <- mean(sq)
+  mse_mcse <- stats::sd(sq) / sqrt(n)
   out <- list(
     data.table::data.table(measure = "Mean estimate", value = mean(est), mcse = s / sqrt(n),
                            ref = truth, n = n),
-    data.table::data.table(measure = "Bias (log HR)", value = mean(est) - truth,
+    data.table::data.table(measure = "Bias", value = mean(est) - truth,
                            mcse = sqrt(s^2 / n + bias_extra_mcse^2), ref = 0, n = n),
     data.table::data.table(measure = "Empirical SE", value = s, mcse = s / sqrt(2 * (n - 1)),
                            ref = NA_real_, n = n),
-    data.table::data.table(measure = "RMSE", value = sqrt((mean(est) - truth)^2 + s^2),
-                           mcse = NA_real_, ref = NA_real_, n = n)
+    data.table::data.table(measure = "RMSE", value = sqrt(mse), mcse = mse_mcse / (2 * sqrt(mse)),
+                           ref = 0, n = n),
+    data.table::data.table(measure = "MSE", value = mse, mcse = mse_mcse, ref = 0, n = n)
   )
   if (!is.null(lo)) {
     out <- c(out, list(
@@ -118,7 +129,6 @@ perf_rows <- function(analysis, method, est, lo = NULL, hi = NULL, truth, rej_al
       prop("CI entirely above truth", lo > truth, 0.025)
     ))
   }
-  if (!is.null(rej_alt)) out <- c(out, list(prop("Power", rej_alt, NA_real_)))
   if (!is.null(rej_null)) {
     out <- c(out, list(prop("Type I error", rej_null, 0.05),
                        prop("Rejections favouring arm 1", low_null, 0.025)))
@@ -128,16 +138,17 @@ perf_rows <- function(analysis, method, est, lo = NULL, hi = NULL, truth, rej_al
 
 #' Performance of the published CCW analysis in long format (main replicates)
 #' @param sim_results Main replicates; @param truth_table From `make_truth_table()`.
-#' @param level Nominal level.
+#' @param level Nominal level; @param favours_low TRUE if a smaller estimate favours arm 1.
 #' @return Rows as `perf_rows()`.
-ccw_performance_long <- function(sim_results, truth_table, level = 0.95) {
+ccw_performance_long <- function(sim_results, truth_table, level = 0.95, favours_low = TRUE) {
   z <- stats::qnorm(1 - (1 - level) / 2)
   tt <- truth_table[scenario == "observed"]
   o <- sim_results[theta == tt$theta & !is.na(estimate)]
   n0 <- sim_results[theta == 0 & !is.na(estimate)]
+  zs <- n0$estimate / n0$se
   perf_rows("CCW", "Wald (robust SE)", o$estimate, o$estimate - z * o$se, o$estimate + z * o$se,
-            tt$truth, rej_alt = abs(o$estimate / o$se) > z, rej_null = abs(n0$estimate / n0$se) > z,
-            low_null = n0$estimate / n0$se < -z, bias_extra_mcse = tt$truth_mcse)
+            tt$truth, rej_null = abs(zs) > z, low_null = if (favours_low) zs < -z else zs > z,
+            bias_extra_mcse = tt$truth_mcse)
 }
 
 #' Check the simple adjustment in an independent set of simulated studies (paper 2.7.2 step 5c,
@@ -156,23 +167,24 @@ validate_adjustment <- function(adj, val_results, truth_table, level = 0.95) {
   extra <- adj$mean_est_mcse
   rbind(
     perf_rows("Simple adjustment", "Non-parametric", o$est_adj, o$ci_lo_np, o$ci_hi_np, tr,
-              o$rej_np, n0$rej_np, n0$low_np, extra),
+              n0$rej_np, n0$fav_np, extra),
     perf_rows("Simple adjustment", "Non-parametric (reflected)", o$est_adj, o$ci_lo_np_refl,
               o$ci_hi_np_refl, tr, bias_extra_mcse = extra),
     perf_rows("Simple adjustment", "Parametric", o$est_adj, o$ci_lo_par, o$ci_hi_par, tr,
-              o$rej_par, n0$rej_par, n0$low_par, extra),
+              n0$rej_par, n0$fav_par, extra),
     perf_rows("CCW", "Wald (robust SE), validation set", o$estimate, o$ci_lo_wald, o$ci_hi_wald,
-              tr, o$rej_wald, n0$rej_wald, n0$low_wald)
+              tr, n0$rej_wald, n0$fav_wald)
   )
 }
 
 #' Performance of all analyses (CCW, simple and nested adjustment) in one long table
 #' @param sim_results Main replicates; @param truth_table From `make_truth_table()`.
 #' @param validation From `validate_adjustment()`; @param nested From `summarise_nested()`.
-#' @param level Nominal level.
+#' @param level Nominal level; @param favours_low TRUE if a smaller estimate favours arm 1.
 #' @return Rows as `perf_rows()`.
-compare_performance <- function(sim_results, truth_table, validation, nested, level = 0.95) {
-  rbind(ccw_performance_long(sim_results, truth_table, level), validation, nested$long)
+compare_performance <- function(sim_results, truth_table, validation, nested, level = 0.95,
+                                favours_low = TRUE) {
+  rbind(ccw_performance_long(sim_results, truth_table, level, favours_low), validation, nested$long)
 }
 
 #' Quantiles of the studentised statistic T = (estimate - truth) / se (parametric bootstrap-t)

@@ -24,14 +24,17 @@ nested_fail_row <- function(rep, seed, res, status, message, cols) {
 
 nested_cols <- c("theta_hat_r", "theta_r", "n_eval", "at_bound", "mean_inner", "mean_inner_mcse",
                  "n_inner_ok", "truth_r", "truth_r_mcse", "bias_r", "est_adj", "q_lo", "q_hi",
-                 "ci_lo_np", "ci_hi_np", "ci_lo_np_refl", "ci_hi_np_refl", "seconds")
+                 "ci_lo_np", "ci_hi_np", "ci_lo_np_refl", "ci_hi_np_refl", "seconds", "seconds_cal")
 
 #' One outer replicate at the calibrated effect (paper 2.7.2, nested steps 2-8)
 #' @param data Base data; @param dgm Fitted DGM; @param calibration From `calibrate_observed()`.
 #' @param rep,seed Outer replicate index and seed; @param spec Dataset entry of `cfg$datasets`.
 #' @param cfg Full config (uses `nested`, `calibration$bound`); @param level Nominal level.
-#' @return One-row data.table (see `nested_cols`).
-nested_outer_one <- function(data, dgm, calibration, rep, seed, spec, cfg, level = 0.95) {
+#' @param keep_inner Keep the inner estimates at theta_r in list column `inner_est` (pilot only).
+#' @return One-row data.table (see `nested_cols`); `seconds_cal` is the time of the inner
+#'   simulations (calibration steps), `seconds` the whole outer replicate.
+nested_outer_one <- function(data, dgm, calibration, rep, seed, spec, cfg, level = 0.95,
+                             keep_inner = FALSE) {
   t0 <- proc.time()[["elapsed"]]
   nc <- cfg$nested
   rng <- draw_replicate_rng(seed, nrow(data))
@@ -44,9 +47,12 @@ nested_outer_one <- function(data, dgm, calibration, rep, seed, spec, cfg, level
     # Refit the prediction model to the outer dataset, as for the study data
     dgm_r <- fit_dgm(sim, spec$dgm, spec$censoring)
     sd <- nested_seeds(rng$seed_aux, nc$inner)
-    cc <- list(max_iter = nc$max_iter, tol = nc$tol, bound = cfg$calibration$bound)
+    scale <- if (is.null(spec$tol_scale)) 1 else spec$tol_scale
+    cc <- list(max_iter = nc$max_iter, tol = nc$tol * scale, bound = cfg$calibration$bound)
+    t_cal <- proc.time()[["elapsed"]]
     cal <- calibrate_mean(dgm_r, data, res$estimate, sd$inner, spec$pipeline, cc,
                           start = calibration$theta_cal, slope = calibration$slope)
+    seconds_cal <- proc.time()[["elapsed"]] - t_cal
     tr <- compute_truth(dgm_r, data, cal$theta_cal, spec$pipeline, cfg, n_rep = nc$truth_n_rep,
                         n_target = nc$truth_n_target, seed = sd$truth)
     est_in <- cal$estimates[!is.na(cal$estimates)]
@@ -62,11 +68,12 @@ nested_outer_one <- function(data, dgm, calibration, rep, seed, spec, cfg, level
       q_lo = q[["q_lo"]], q_hi = q[["q_hi"]],
       ci_lo_np = est_adj + q[["q_lo"]], ci_hi_np = est_adj + q[["q_hi"]],
       ci_lo_np_refl = est_adj - q[["q_hi"]], ci_hi_np_refl = est_adj - q[["q_lo"]],
-      seconds = NA_real_, status = res$status, message = res$message
+      seconds = NA_real_, seconds_cal = seconds_cal, status = res$status, message = res$message
     )
   }, error = function(e) {
     nested_fail_row(rep, seed, res, "error_nested", conditionMessage(e), nested_cols)
   })
+  if (keep_inner && !is.na(out$est_adj)) out[, inner_est := list(list(est_in))]
   out[, seconds := proc.time()[["elapsed"]] - t0]
   out[]
 }
@@ -74,10 +81,12 @@ nested_outer_one <- function(data, dgm, calibration, rep, seed, spec, cfg, level
 #' One outer replicate with no effect: refitted model, inner null studies, own rejection limits
 #' @param data Base data; @param dgm Fitted DGM; @param rep,seed Outer replicate index and seed.
 #' @param spec Dataset entry of `cfg$datasets`; @param cfg Full config; @param level Nominal level.
-#' @return One-row data.table: estimate, inner null mean and limits, reject, reject_lower.
+#' @return One-row data.table: estimate, inner null mean and limits, reject, reject_fav (rejection
+#'   in the direction favouring arm 1).
 nested_null_one <- function(data, dgm, rep, seed, spec, cfg, level = 0.95) {
   t0 <- proc.time()[["elapsed"]]
-  cols <- c("mean_inner", "n_inner_ok", "q_lo", "q_hi", "reject", "reject_lower", "seconds")
+  cols <- c("mean_inner", "n_inner_ok", "q_lo", "q_hi", "reject", "reject_fav", "seconds")
+  low_fav <- endpoint_info(spec$pipeline)$favours_low
   rng <- draw_replicate_rng(seed, nrow(data))
   sim <- simulate_outcomes(data, dgm, 0, rng$u_event, rng$u_cens)
   res <- safely_run(run_pipeline, sim, spec$pipeline)
@@ -95,7 +104,7 @@ nested_null_one <- function(data, dgm, rep, seed, spec, cfg, level = 0.95) {
       mean_inner = mean(est_in), n_inner_ok = length(est_in),
       q_lo = q[["q_lo"]], q_hi = q[["q_hi"]],
       reject = as.numeric(d < q[["q_lo"]] | d > q[["q_hi"]]),
-      reject_lower = as.numeric(d < q[["q_lo"]]),
+      reject_fav = as.numeric(if (low_fav) d < q[["q_lo"]] else d > q[["q_hi"]]),
       seconds = NA_real_, status = res$status, message = res$message
     )
   }, error = function(e) nested_fail_row(rep, seed, res, "error_nested", conditionMessage(e), cols))
@@ -107,8 +116,10 @@ nested_null_one <- function(data, dgm, rep, seed, spec, cfg, level = 0.95) {
 #' @param data Base data; @param dgm Fitted DGM; @param calibration From `calibrate_observed()`
 #'   (NULL: no-effect scenario). @param seeds Outer seeds (the validation seeds).
 #' @param batch_id Batch index; @param spec Dataset entry; @param cfg Full config.
+#' @param keep_inner Keep the inner estimates (pilot only, see `nested_outer_one()`).
 #' @return data.table, one row per outer replicate.
-run_nested_batch <- function(data, dgm, calibration, seeds, batch_id, spec, cfg) {
+run_nested_batch <- function(data, dgm, calibration, seeds, batch_id, spec, cfg,
+                             keep_inner = FALSE) {
   checkmate::assert_count(batch_id, positive = TRUE)
   nc <- cfg$nested
   checkmate::assert_true(nc$outer <= length(seeds))
@@ -119,7 +130,7 @@ run_nested_batch <- function(data, dgm, calibration, seeds, batch_id, spec, cfg)
     if (is.null(calibration)) {
       nested_null_one(data, dgm, r, seeds[r], spec, cfg, level)
     } else {
-      nested_outer_one(data, dgm, calibration, r, seeds[r], spec, cfg, level)
+      nested_outer_one(data, dgm, calibration, r, seeds[r], spec, cfg, level, keep_inner)
     }
   })
   data.table::rbindlist(out, fill = TRUE)
@@ -129,14 +140,17 @@ run_nested_batch <- function(data, dgm, calibration, seeds, batch_id, spec, cfg)
 #' @param nested_obs,nested_null Outer replicates at the calibrated effect and with no effect.
 #' @param truth_table From `make_truth_table()`; @param adj From `adjust_simple()`.
 #' @param level Nominal level.
+#' @param shrink Shrink the outer deviations of the adjusted estimate by sqrt(V / (V + sigma_w^2 / R))
+#'   before taking the quantiles of the nested CI (paper Appendix); both CIs are reported.
 #' @return list(summary = one-row data.table, long = rows as `perf_rows()`).
-summarise_nested <- function(nested_obs, nested_null, truth_table, adj, level = 0.95) {
+summarise_nested <- function(nested_obs, nested_null, truth_table, adj, level = 0.95,
+                             shrink = FALSE) {
   tt <- truth_table[scenario == "observed"]
   o <- nested_obs[!is.na(est_adj)]
   n0 <- nested_null[!is.na(reject)]
   long <- rbind(
     perf_rows("Nested adjustment", "Non-parametric", o$est_adj, o$ci_lo_np, o$ci_hi_np, tt$truth,
-              rej_null = n0$reject == 1, low_null = n0$reject_lower == 1,
+              rej_null = n0$reject == 1, low_null = n0$reject_fav == 1,
               bias_extra_mcse = tt$truth_mcse),
     perf_rows("Nested adjustment", "Non-parametric (reflected)", o$est_adj, o$ci_lo_np_refl,
               o$ci_hi_np_refl, tt$truth, bias_extra_mcse = tt$truth_mcse)
@@ -147,6 +161,10 @@ summarise_nested <- function(nested_obs, nested_null, truth_table, adj, level = 
   # Nested CI of the observed analysis: spread of the bias-adjusted estimator across outer
   # datasets, which includes the variation of the estimated bias correction
   q <- centred_quantiles(o$est_adj, level)
+  comp <- nested_variance_components(o$est_adj, o$mean_inner_mcse^2 * o$n_inner_ok,
+                                     stats::median(o$n_inner_ok))
+  q_s <- centred_quantiles(shrink_deviations(o$est_adj, comp$shrink), level)
+  q_use <- if (shrink && is.finite(comp$shrink)) q_s else q
   within <- sqrt(mean(o$mean_inner_mcse^2 + data.table::fifelse(is.na(o$truth_r_mcse), 0,
                                                                 o$truth_r_mcse^2)))
   summary <- data.table::data.table(
@@ -157,9 +175,12 @@ summarise_nested <- function(nested_obs, nested_null, truth_table, adj, level = 
     seconds = sum(nested_obs$seconds, na.rm = TRUE) + sum(nested_null$seconds, na.rm = TRUE),
     theta_r_mean = mean(o$theta_r), theta_r_sd = stats::sd(o$theta_r),
     bias_r_mean = mean(o$bias_r), bias_r_sd = stats::sd(o$bias_r), bias_r_within_mcse = within,
-    q_lo = q[["q_lo"]], q_hi = q[["q_hi"]],
-    ci_lo_np = adj$est_adj + q[["q_lo"]], ci_hi_np = adj$est_adj + q[["q_hi"]],
-    ci_lo_np_refl = adj$est_adj - q[["q_hi"]], ci_hi_np_refl = adj$est_adj - q[["q_lo"]],
+    var_obs = comp$var_obs, sigma_w2 = comp$sigma_w2, var_V = comp$V, k_ratio = comp$k,
+    shrink_factor = comp$shrink, shrunk = shrink && is.finite(comp$shrink),
+    q_lo = q_use[["q_lo"]], q_hi = q_use[["q_hi"]],
+    ci_lo_np = adj$est_adj + q_use[["q_lo"]], ci_hi_np = adj$est_adj + q_use[["q_hi"]],
+    ci_lo_np_unshrunk = adj$est_adj + q[["q_lo"]], ci_hi_np_unshrunk = adj$est_adj + q[["q_hi"]],
+    ci_lo_np_refl = adj$est_adj - q_use[["q_hi"]], ci_hi_np_refl = adj$est_adj - q_use[["q_lo"]],
     coverage_fixed = mean(fx$ci_lo_np <= tt$truth & tt$truth <= fx$ci_hi_np),
     type1_fixed = mean(fx0$rej_np)
   )

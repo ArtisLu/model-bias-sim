@@ -40,7 +40,7 @@ test_that("non-parametric CI and test hold their level in independent replicates
   expect_equal(t1, 0.05, tolerance = 0.005)
   expect_equal(val[method == "Non-parametric" & measure == "Rejections favouring arm 1", value],
                0.025, tolerance = 0.004)
-  expect_equal(val[method == "Non-parametric" & measure == "Bias (log HR)", value], 0, tolerance = 0.01)
+  expect_equal(val[method == "Non-parametric" & measure == "Bias", value], 0, tolerance = 0.01)
 })
 
 test_that("performance rows: misses add up to non-coverage", {
@@ -50,7 +50,37 @@ test_that("performance rows: misses add up to non-coverage", {
   cv <- r[measure == "95% CI coverage", value]
   expect_equal(r[measure == "CI entirely below truth", value] + r[measure == "CI entirely above truth", value],
                1 - cv)
-  expect_setequal(r$measure, c("Mean estimate", "Bias (log HR)", "Empirical SE", "RMSE",
+  expect_setequal(r$measure, c("Mean estimate", "Bias", "Empirical SE", "RMSE", "MSE",
                                "95% CI coverage", "CI entirely below truth", "CI entirely above truth",
                                "Type I error", "Rejections favouring arm 1"))
+  expect_false("Power" %in% r$measure)
+})
+
+test_that("MSE is RMSE squared with rsimsum-style MCSE", {
+  set.seed(4)
+  est <- rnorm(4000, 0.1, 0.3)
+  r <- perf_rows("A", "x", est, truth = 0)
+  mse <- r[measure == "MSE"]
+  rmse <- r[measure == "RMSE"]
+  expect_equal(mse$value, mean(est^2))
+  expect_equal(rmse$value^2, mse$value)
+  expect_equal(mse$mcse, sd(est^2) / sqrt(length(est)))
+  expect_equal(rmse$mcse, mse$mcse / (2 * rmse$value))
+  # MSE = bias^2 + variance (with the n - 1 denominator up to a factor (n - 1) / n)
+  b <- r[measure == "Bias", value]
+  s <- r[measure == "Empirical SE", value]
+  expect_equal(mse$value, b^2 + s^2 * (length(est) - 1) / length(est))
+})
+
+test_that("rejections favouring arm 1 follow the direction of the endpoint", {
+  adj <- adjust_simple(obs_m, mk_sims(rnorm(500, 0, 0.28), rnorm(500, 0, 0.28)), tt_m, "m")
+  a_low <- apply_adjustment(c(-1, 1), c(0.27, 0.27), adj)
+  adj_up <- adj
+  adj_up$favours_low <- FALSE
+  a_up <- apply_adjustment(c(-1, 1), c(0.27, 0.27), adj_up)
+  expect_equal(a_low$fav_wald, c(TRUE, FALSE))
+  expect_equal(a_up$fav_wald, c(FALSE, TRUE))
+  expect_equal(a_low$fav_np, c(TRUE, FALSE))
+  expect_equal(a_up$fav_np, c(FALSE, TRUE))
+  expect_equal(a_low$rej_np, a_up$rej_np)
 })

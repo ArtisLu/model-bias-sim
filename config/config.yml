@@ -2,13 +2,18 @@
 # Profiles: default = Maringe-only production run (paper); smoke = quick end-to-end check;
 # two_datasets = Maringe + SynPUF comparison (R_CONFIG_ACTIVE=two_datasets); b100k = precision run.
 # Do not add keys lightly: every target depends on the config object.
+# v0.65 profiles: gengamma = sensitivity analysis with a 3-parameter generalized gamma prediction
+# model (paper 4.6); pilot sizes for the nested split are in `pilot` (paper Appendix).
 
 default:
-  # Datasets run by the pipeline; SynPUF stays defined (and tested) but is not run
-  active_datasets: ["maringe"]
+  # Analyses run by the pipeline: one entry of `datasets` each. maringe = log hazard ratio,
+  # maringe_surv12 = difference in 12-month survival (same data, same prediction model). SynPUF
+  # stays defined (and tested) but is not run.
+  active_datasets: ["maringe", "maringe_surv12"]
   seed_master: 20261002
   seed_truth: 20261003
   seed_validation: 20261004  # independent studies that check the adjusted analysis
+  seed_pilot: 20261027       # outer datasets of the pilot for the outer / inner split
   workers: 2
   B: 10000           # replicates per scenario; coverage MCSE ~0.2%, bias MCSE ~0.003 (ADEMP P)
   B_validation: 10000  # independent replicates per scenario (paper 2.7.2 step 5c, 2.7.3 step 9)
@@ -20,9 +25,11 @@ default:
     n_rep: 24          # independent large datasets averaged at theta* and 0
   # Inverse calibration (paper 2.7.1): theta* such that the mean CCW estimate equals the observed
   calibration:
+    start: -0.7        # first theta of the search (v0.65: the grid search is expensive); the search
+                       # stops at once if m(start) is within `tol` of the target
     B: 2000            # simulated studies per search step (replicates 1..B of the main run, CRN)
     max_iter: 6
-    tol: 0.002         # log-HR
+    tol: 0.002         # log-HR; analyses on another scale multiply it by `tol_scale`
     bound: 3           # |theta| cap
   # Nested (double) simulation (paper 2.7.2): outer datasets = first `outer` validation replicates
   nested:
@@ -33,39 +40,84 @@ default:
     tol: 0.02          # log-HR; the bias identity absorbs a small residual
     truth_n_target: 25000
     truth_n_rep: 2
+    shrink: false      # Appendix: shrink the outer deviations by sqrt(V / (V + sigma_w^2 / R))
+  # Pilot study for the outer / inner split (paper Appendix, practical recipe step 1)
+  pilot:
+    outer: 50
+    inner: 50
+    batch_size: 5
+    timing_reps: 20    # simulated studies timed to get the cost of one inner run
+    precision_rel_se: 0.02   # target relative MCSE of the empirical SE (recipe step 3)
+    min_outer_percentile: 1000
+  # Hypothetical RCT used as the target when the pipeline is not consistent (paper 4.6)
+  rct:
+    control_censor_day: 181  # arm without surgery is censored here (grace + 1); null = follow-up end
 
   datasets:
     maringe:
+      base: "maringe"            # data preparation key (data.R)
       label: "Maringe lung cancer (n = 200)"
       file: "data/raw/lungcancer.csv"
       contrast: "Surgery within 6 months vs no surgery within 6 months"
       arm1: "surgery"            # strategy coded arm = 1 (HR < 1 favours it)
       outcome_label: "Death"
+      calib_slope: 0.7           # guess of dm/dtheta for the first Newton step (secant afterwards)
+      tol_scale: 1               # multiplies the calibration tolerances (estimate scale)
       pipeline:
         design: "grace_vs_none"
-        grace: 182.62            # days
+        endpoint: "hr"           # log hazard ratio of the weighted Cox model
+        grace: 180               # days (v0.65: exactly 180; v0.64 used 182.62)
         cens_covariates: ["age_c", "sex", "perf", "stage", "deprivation", "charlson", "emergency"]
         conf_level: 0.95
       dgm:
+        family: "weibull"        # or "gengamma" (3-parameter generalized gamma baseline, paper 4.6)
         covariates: ["age_c", "sex", "perf", "stage", "deprivation", "charlson", "emergency"]
         age_unit: 5              # age_c = (age - 80) / 5 in data.R
       # Administrative censoring at 1 year only: no loss to follow-up to model
       censoring:
         model: "none"
+    # Same data, DGM and CCW clones/weights; endpoint = difference in survival at 12 months
+    maringe_surv12:
+      base: "maringe"
+      label: "Maringe lung cancer (n = 200), 12-month survival"
+      file: "data/raw/lungcancer.csv"
+      contrast: "Surgery within 6 months vs no surgery within 6 months"
+      arm1: "surgery"
+      outcome_label: "Death"
+      calib_slope: -0.15         # survival difference falls as theta rises
+      tol_scale: 0.2             # SD of the risk difference is about 1/5 of that of the log HR
+      pipeline:
+        design: "grace_vs_none"
+        endpoint: "surv12"       # weighted proportion alive at surv_time, difference arm 1 - arm 0
+        surv_time: 365           # days (administrative end is 365.24)
+        grace: 180
+        cens_covariates: ["age_c", "sex", "perf", "stage", "deprivation", "charlson", "emergency"]
+        conf_level: 0.95
+      dgm:
+        family: "weibull"
+        covariates: ["age_c", "sex", "perf", "stage", "deprivation", "charlson", "emergency"]
+        age_unit: 5
+      censoring:
+        model: "none"
     synpuf:
+      base: "synpuf"
       label: "SynPUF MI cohort (n = 1,590)"
       file: "data/raw/synpuf_baseccwcohort.sas7bdat"
       contrast: "Treatment start within 90 days vs within 30 days of MI discharge"
       arm1: "the 90-day strategy"
       outcome_label: "Readmission or death"
       horizon: 180               # days; tutorial follow-up window
+      calib_slope: 0.7
+      tol_scale: 1
       pipeline:
         design: "window_vs_window"
+        endpoint: "hr"
         windows: [30, 90]        # reference window first
         recent_days: 7           # tutorial: only starters in the last 7 days are up-weighted
         cens_covariates: ["age_c", "sex", "renal"]
         conf_level: 0.95
       dgm:
+        family: "weibull"
         covariates: ["age_c", "sex", "renal", "nonwhite"]
         age_unit: 10             # age_c = (age - 75) / 10 in data.R
       # Loss to follow-up before the horizon: Weibull PH with the event/censoring indicator
@@ -75,7 +127,7 @@ default:
         covariates: ["age_c", "sex", "renal", "nonwhite"]
 
 smoke:
-  active_datasets: ["maringe", "synpuf"]
+  active_datasets: ["maringe", "maringe_surv12", "synpuf"]
   workers: 1
   B: 20
   B_validation: 20
@@ -84,6 +136,7 @@ smoke:
     n_target: 2000
     n_rep: 2
   calibration:
+    start: -0.7
     B: 10
     max_iter: 2
     tol: 0.05
@@ -96,9 +149,28 @@ smoke:
     tol: 0.05
     truth_n_target: 1000
     truth_n_rep: 1
+    shrink: true
+  pilot:
+    outer: 4
+    inner: 6
+    batch_size: 2
+    timing_reps: 4
+    precision_rel_se: 0.1
+    min_outer_percentile: 100
 
 two_datasets:
   active_datasets: ["maringe", "synpuf"]
+
+# Sensitivity analysis of paper 4.6: generalized gamma instead of Weibull prediction model.
+# Own store: Sys.setenv(R_CONFIG_ACTIVE = "gengamma"); targets::tar_make(store = "_targets_gengamma")
+gengamma:
+  datasets:
+    maringe:
+      dgm:
+        family: "gengamma"
+    maringe_surv12:
+      dgm:
+        family: "gengamma"
 
 # Precision check: 100,000 replicates per scenario. Run into its own store so the paper run
 # stays intact: Sys.setenv(R_CONFIG_ACTIVE = "b100k"); targets::tar_make(store = "_targets_b100k")
@@ -110,6 +182,7 @@ b100k:
     n_target: 50000
     n_rep: 96          # halves the truth MCSE of the default (24), so the bias MCSE shrinks too
   calibration:
+    start: -0.7
     B: 10000
     max_iter: 6
     tol: 0.001
