@@ -32,15 +32,19 @@ default:
     tol: 0.002         # log-HR; analyses on another scale multiply it by `tol_scale`
     bound: 3           # |theta| cap
   # Nested (double) simulation (paper 2.7.2): outer datasets = first `outer` validation replicates
+  # v0.65: split chosen from the pilot of 27 Oct 2026 (50 x 50; k = 0.81, c_o / c_i = 70, R* = 11,
+  # B = 1,251 for a 2% relative MCSE of the SE). R = 50 rather than R*: the per-outer CI limits are
+  # quantiles of the inner studies and 11 of them are about 25% too narrow (R = 25: 2%, R = 50: ~0).
+  # Same cost as the former 500 x 250 (about 5.3 CPU hours here), 2.6 times lower variance of V-hat.
   nested:
-    outer: 500
-    inner: 250         # simulated studies per outer dataset and search step
+    outer: 1250
+    inner: 50          # simulated studies per outer dataset and search step
     batch_size: 5      # outer datasets per branch
     max_iter: 2        # secant steps after the Newton step from theta*
     tol: 0.02          # log-HR; the bias identity absorbs a small residual
     truth_n_target: 25000
     truth_n_rep: 2
-    shrink: false      # Appendix: shrink the outer deviations by sqrt(V / (V + sigma_w^2 / R))
+    shrink: true       # Appendix: shrink the outer deviations by sqrt(V / (V + sigma_w^2 / R)) (~0.99)
   # Pilot study for the outer / inner split (paper Appendix, practical recipe step 1)
   pilot:
     outer: 50
@@ -49,6 +53,7 @@ default:
     timing_reps: 20    # simulated studies timed to get the cost of one inner run
     precision_rel_se: 0.02   # target relative MCSE of the empirical SE (recipe step 3)
     min_outer_percentile: 1000
+    min_inner_limits: 50     # inner studies per outer dataset below which its CI limits are too narrow
   # Hypothetical RCT used as the target when the pipeline is not consistent (paper 4.6)
   rct:
     control_censor_day: 181  # arm without surgery is censored here (grace + 1); null = follow-up end
@@ -61,7 +66,7 @@ default:
       contrast: "Surgery within 6 months vs no surgery within 6 months"
       arm1: "surgery"            # strategy coded arm = 1 (HR < 1 favours it)
       outcome_label: "Death"
-      calib_slope: 0.7           # guess of dm/dtheta for the first Newton step (secant afterwards)
+      calib_slope: 0.6           # guess of dm/dtheta for the first Newton step (measured: 0.60)
       tol_scale: 1               # multiplies the calibration tolerances (estimate scale)
       pipeline:
         design: "grace_vs_none"
@@ -84,7 +89,7 @@ default:
       contrast: "Surgery within 6 months vs no surgery within 6 months"
       arm1: "surgery"
       outcome_label: "Death"
-      calib_slope: -0.15         # survival difference falls as theta rises
+      calib_slope: -0.1          # survival difference falls as theta rises (measured: -0.10)
       tol_scale: 0.2             # SD of the risk difference is about 1/5 of that of the log HR
       pipeline:
         design: "grace_vs_none"
@@ -157,9 +162,23 @@ smoke:
     timing_reps: 4
     precision_rel_se: 0.1
     min_outer_percentile: 100
+    min_inner_limits: 4
 
 two_datasets:
   active_datasets: ["maringe", "synpuf"]
+
+# Nested simulation at the variance optimum of the pilot (R* = 11; outer CI limits are then too narrow,
+# use for the bias correction, SE and RMSE of the outer estimates only).
+nested_rstar:
+  nested:
+    outer: 1250
+    inner: 11
+    batch_size: 5
+    max_iter: 2
+    tol: 0.02
+    truth_n_target: 25000
+    truth_n_rep: 2
+    shrink: true
 
 # Sensitivity analysis of paper 4.6: generalized gamma instead of Weibull prediction model.
 # Own store: Sys.setenv(R_CONFIG_ACTIVE = "gengamma"); targets::tar_make(store = "_targets_gengamma")
@@ -188,8 +207,8 @@ b100k:
     tol: 0.001
     bound: 3
   nested:
-    outer: 1000
-    inner: 500
+    outer: 2500        # half the relative MCSE of the default split (pilot: B ~ 1 / (2 rel^2))
+    inner: 100
     batch_size: 5
     max_iter: 2
     tol: 0.02

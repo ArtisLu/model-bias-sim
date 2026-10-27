@@ -4,17 +4,21 @@ Simulation for Rippin, Luguzis, Antunes, Ralphs: *Extending Quantitative Bias An
 Analysis-Induced Bias*
 (paper Section 4). Case study: the clone-censor-weighting (CCW) analysis of the Maringe et al. (2020)
 lung cancer example (surgery within 6 months vs no surgery).
-Adjustment step as in manuscript v0.64 (17 Oct 2026), Section 2.7: inverse calibration (mean CCW estimate
-at θ\* = observed estimate), non-parametric bias correction, CI and test, checked in independent simulated
-studies, plus a nested (double) simulation that repeats the whole adjustment in each outer dataset.
-Design: `protocol/ADEMP.md` (v0.4). Coding standards: `docs/simulation_setup.md`.
+Adjustment step as in manuscript v0.65 (24 Oct 2026), Section 2.7: inverse calibration (mean CCW estimate
+at θ\* = observed estimate, search started at θ = −0.7), non-parametric bias correction, CI and test,
+checked in independent simulated studies, plus a nested (double) simulation that repeats the whole
+adjustment in each outer dataset. Additional analyses of Section 4.6 (second endpoint: difference in
+12-month survival; generalized-gamma prediction model; hypothetical-trial target for an estimator that
+is not consistent) and the pilot study for the outer / inner split (Appendix). Performance measures:
+bias, empirical and model SE, RMSE, MSE (= RMSE²), coverage, type I error, each with MCSE; no power.
+Design: `protocol/ADEMP.md` (v0.5). Coding standards: `docs/simulation_setup.md`.
 How the pipeline fits together (folders, scripts, dependencies): `docs/technical_setup.html`.
 
 ## Versions and datasets
 
 | What | Where | Datasets run |
 |---|---|---|
-| Current analysis for the paper | `main` | Maringe only (`active_datasets` in `config/config.yml`) |
+| Current analysis for the paper | `main` | Maringe: log HR (`maringe`) and 12-month survival difference (`maringe_surv12`) (`active_datasets` in `config/config.yml`) |
 | Two-dataset comparison of 5 Oct 2026 (frozen) | branch `archive/two-datasets` | Maringe + SynPUF |
 | Results of that run | `archive/2026-10-05_two_datasets/` | report, figures, targets store |
 
@@ -36,7 +40,7 @@ renv::snapshot()
 
 # every run
 testthat::test_dir("tests/testthat")                         # unit tests (~10 s)
-Sys.setenv(R_CONFIG_ACTIVE = "smoke"); targets::tar_make()   # smoke run (~30 s)
+Sys.setenv(R_CONFIG_ACTIVE = "smoke"); targets::tar_make()   # smoke run (~1 min)
 Sys.unsetenv("R_CONFIG_ACTIVE"); targets::tar_make()         # full run (B = 10,000 + nested)
 source("reports/paper/build_section4.R")                     # Word draft of paper Section 4
 ```
@@ -54,9 +58,43 @@ depends on it. For the CCW and simple-adjustment results without waiting for the
 `targets::tar_make(names = c("adjustment_maringe", "validation_maringe"))`; a later full `tar_make()`
 keeps everything already built, including finished nested branches.
 
+**Pilot study and outer / inner split (paper Appendix).** The targets `pilot_nested_<ds>`, `pilot_timing_<ds>`,
+`allocation_<ds>` and `pilot_anova_<ds>` run `pilot:` (50 outer × 50 inner by default) and give k = σ_w²/V,
+the costs of an outer replicate and of an inner run, R\*, the outer runs for the target precision and the
+cost of the configured design (`R/allocation.R`). Run them first
+(`targets::tar_make(names = starts_with("allocation_"))`), then set `nested: outer` and `inner` in
+`config/config.yml` for the paper run. The configured values are the result of the pilot of 27 Oct 2026
+(see the change log in `protocol/ADEMP.md`). `nested: shrink: true` applies the shrinkage of the outer
+deviations by √(V/Var_obs).
+
+**Additional analyses (paper 4.6).**
+
+```r
+# Generalized-gamma prediction model (own store; the paper run is untouched)
+Sys.setenv(R_CONFIG_ACTIVE = "gengamma", QBA_WORKERS = parallel::detectCores() - 1)
+targets::tar_make(store = "_targets_gengamma")
+Sys.unsetenv("R_CONFIG_ACTIVE")
+```
+
+The 12-month survival endpoint is a second dataset entry (`maringe_surv12`) with the same data and prediction
+model. The hypothetical-trial target (`truth_rct_*`, `adjustment_rct_*`, `nested_rct_*`, `perf_compare_rct_*`;
+HR endpoint only; assumptions in `rct:` and `protocol/ADEMP.md`) reuses the replicates and the inner runs;
+only the truth changes.
+
+**Running on a high-performance server.** Nothing in the code is tied to a machine: `QBA_WORKERS` sets the
+number of crew workers (default `workers` in the config), branches are independent (common random numbers
+tied to the replicate index), and results do not depend on the number of workers. To move the project:
+copy the repository (without `_targets*` stores), `renv::restore()` from `renv.lock` (R 4.3.3 or newer;
+install the system libraries of the packages first), run the unit tests and the smoke profile, then
+`Sys.setenv(QBA_WORKERS = <cores - 1>); targets::tar_make()` in a persistent session (`tmux`, `screen` or the
+scheduler of the server; for a SLURM cluster `crew.cluster::crew_controller_slurm()` can replace the local
+controller in `_targets.R`). Memory: about 1.5 GB per worker for the large-sample truth (50,000 patients
+for the main truth, 25,000 in the nested runs); the stores are written to the project folder, so use fast
+local disk.
+
 **More replicates.** `B` (replicates per scenario) is in `config/config.yml`. For a precision check
 without touching the paper run, use the `b100k` profile (100,000 main and 100,000 check studies per
-scenario, 96 instead of 24 large datasets for the true value, nested 1,000 outer × 500 inner) with its own
+scenario, 96 instead of 24 large datasets for the true value, nested 2,500 outer × 100 inner) with its own
 store;
 figures, report and Word draft go to `reports/b100k/` (the paper outputs in `reports/` are untouched):
 
@@ -84,8 +122,8 @@ from `reports/qba_report.qmd` when Maringe is active and the Quarto CLI is insta
 | Path | Content |
 |---|---|
 | `_targets.R` | pipeline (only entry point) |
-| `R/` | data, dgm, truth (incl. inverse calibration), pipeline, simulate, performance, correction (simple adjustment and its check), nested, plots, paper, belt (optional), utils |
-| `config/config.yml` | seeds, B, check and nested sizes, truth size, calibration, datasets (`default`, `smoke`, `two_datasets`, `b100k`) |
+| `R/` | data, dgm (Weibull, generalized gamma), truth (incl. inverse calibration), pipeline (log HR, 12-month survival difference), simulate, performance, correction (simple adjustment and its check), nested, allocation (pilot, outer / inner split), rct (hypothetical-trial target), plots, paper, belt (optional), utils |
+| `config/config.yml` | seeds, B, check, nested and pilot sizes, truth size, calibration, `rct`, datasets (profiles `default`, `smoke`, `two_datasets`, `gengamma`, `b100k`) |
 | `config/belt.yml` | optional bootstrap-t / confidence-belt comparison (`enabled: false` by default) |
 | `data/raw/` | Maringe lung cancer CSV and SynPUF tutorial cohort (read-only) + source/checksums |
 | `tests/testthat/` | unit tests |

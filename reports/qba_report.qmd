@@ -1,8 +1,8 @@
 ---
 title: "Does clone-censor-weighting carry modelling bias?"
-subtitle: "Modelling-bias QBA of the CCW analysis in the Maringe lung cancer example: simple and nested adjustment (draft v0.64)"
+subtitle: "Modelling-bias QBA of the CCW analysis in the Maringe lung cancer example: simple and nested adjustment (draft v0.65)"
 author: "Artis Luguzis"
-date: "22 October 2026"
+date: "27 October 2026"
 format:
   html:
     embed-resources: true
@@ -33,7 +33,10 @@ targets::tar_load(c(
   performance_maringe, adjustment_maringe, validation_maringe, nested_maringe, nested_obs_maringe,
   nested_null_maringe, perf_compare_maringe, calibration_maringe, dgm_maringe, obs_result_maringe,
   base_data_maringe, sim_results_maringe, truth_table_maringe, table_baseline_maringe,
-  table_results_maringe, session
+  table_results_maringe, allocation_maringe, pilot_anova_maringe, pilot_limits_maringe, truth_table_rct_maringe,
+  adjustment_rct_maringe, perf_compare_rct_maringe, nested_rct_maringe, table_results_rct_maringe,
+  performance_maringe_surv12, adjustment_maringe_surv12, perf_compare_maringe_surv12,
+  nested_maringe_surv12, calibration_maringe_surv12, table_results_maringe_surv12, session
 ), store = store)
 # Figure targets store paths relative to the project root
 fig <- function(path) file.path(root, path)
@@ -97,7 +100,7 @@ mins_all <- sum(meta$seconds, na.rm = TRUE) / 60
 ## Key answer
 
 ```{r key-flags}
-bias_sig <- off(cc("Bias (log HR)"))
+bias_sig <- off(cc("Bias"))
 cov_sig <- off(cc("95% CI coverage"))
 t1_sig <- off(cc("Type I error"))
 # A learned rule's two 2.5% limits come from n studies, so its true error rate itself varies by
@@ -116,21 +119,28 @@ judge <- function(r, n, d = 1) {
 }
 ```
 
-The CCW analysis of the Maringe example was replayed `r n0(B)` times on the original `r nrow(bd)` patients with the generating effect calibrated so that the **average** CCW estimate equals the observed one (paper Section 2.7.1), and `r n0(B)` times with no surgery effect. **Bias:** `r if (bias_sig) "small but detectable" else "not detectable"`. **95% CI coverage:** `r if (cov_sig) "below nominal" else "consistent with 95%"`. **Type I error:** `r if (t1_sig) "inflated" else "consistent with 5%"`. After the non-parametric QBA adjustment, checked in an independent set of `r n0(sa("95% CI coverage")$n)` studies per scenario, the bias is `r f3(sa("Bias (log HR)")$value)`, CI coverage `r judge(sa("95% CI coverage"), B)`, and type I error `r judge(sa("Type I error"), B, 2)`. The nested simulation, which re-estimates the whole adjustment in each of `r ns$n_outer` outer datasets, gives coverage `r judge(na("95% CI coverage"), Inf)` and type I error `r judge(na("Type I error"), Inf, 2)` (Monte Carlo error about 1 percentage point, Section 5).
+The CCW analysis of the Maringe example was replayed `r n0(B)` times on the original `r nrow(bd)` patients with the generating effect calibrated so that the **average** CCW estimate equals the observed one (paper Section 2.7.1), and `r n0(B)` times with no surgery effect. **Bias:** `r if (bias_sig) "small but detectable" else "not detectable"`. **95% CI coverage:** `r if (cov_sig) "below nominal" else "consistent with 95%"`. **Type I error:** `r if (t1_sig) "inflated" else "consistent with 5%"`. After the non-parametric QBA adjustment, checked in an independent set of `r n0(sa("95% CI coverage")$n)` studies per scenario, the bias is `r f3(sa("Bias")$value)`, CI coverage `r judge(sa("95% CI coverage"), B)`, and type I error `r judge(sa("Type I error"), B, 2)`. The nested simulation, which re-estimates the whole adjustment in each of `r ns$n_outer` outer datasets, gives coverage `r judge(na("95% CI coverage"), Inf)` and type I error `r judge(na("Type I error"), Inf, 2)` (Monte Carlo error about 1 percentage point, Section 5).
 
 | | CCW as published | Simple adjustment | Nested simulation |
 |---|---|---|---|
 | HR, surgery within 6 months vs not (95% CI) | `r hr(adj$est_obs)` (`r ci(adj$ci_lo_obs, adj$ci_hi_obs)`) | `r hr(adj$est_adj)` (`r ci(adj$ci_lo_np, adj$ci_hi_np)`) | `r hr(adj$est_adj)` (`r ci(ns$ci_lo_np, ns$ci_hi_np)`) |
 | p-value | `r f3(adj$p_obs)` | `r f3(adj$p_np)` (simulation-calibrated) | — |
-| Bias, log HR (95% MC interval) | `r vb(cc("Bias (log HR)"))` | `r vb(sa("Bias (log HR)"))` | `r vb(na("Bias (log HR)"))` |
+| Bias, log HR (95% MC interval) | `r vb(cc("Bias"))` | `r vb(sa("Bias"))` | `r vb(na("Bias"))` |
 | 95% CI coverage (target 95%) | `r vp(cc("95% CI coverage"))` | `r vp(sa("95% CI coverage"))` | `r vp(na("95% CI coverage"))` |
 | Type I error (target 5%) | `r vp(cc("Type I error"), 3)` | `r vp(sa("Type I error"), 3)` | `r vp(na("Type I error"), 3)` |
-| Power at the calibrated effect | `r vp(cc("Power"))` | `r vp(sa("Power"))` | — |
+| RMSE, log HR | `r f3(cc("RMSE")$value)` | `r f3(sa("RMSE")$value)` | `r f3(na("RMSE")$value)` |
 
 Estimate (MCSE). Bold: differs from the target by more than 1.96 MCSE. CCW: `r n0(B)` studies per scenario. Simple adjustment: learned from these, checked in `r n0(sa("95% CI coverage")$n)` independent studies per scenario. Nested: `r ns$n_outer` outer datasets × `r ns$n_inner` inner studies, every adjustment step repeated per outer dataset.
 :::
 
-**What changed since the 13 October report** (manuscript v0.64, 17 Oct):
+**What changed since the 22 October report** (manuscript v0.65, 24 Oct):
+
+- **Calibration** starts at θ = −0.7 (the search stops at once if the mean estimate is already within tolerance); the grace period is exactly 180 days.
+- **Performance measures:** RMSE and MSE = RMSE² are reported everywhere; power is no longer calculated.
+- **Additional analyses** (paper 4.6, Section 6): second endpoint (survival difference at 12 months), generalized-gamma prediction model, hypothetical-trial target for an estimator that is not consistent.
+- **Nested split** (paper Appendix, Section 6.4): inner and outer runs chosen from a pilot study.
+
+**Earlier changes** (manuscript v0.64, 17 Oct):
 
 - **Inverse calibration** (2.7.1): θ\* is now chosen so that the *mean CCW estimate* over simulated studies equals the observed estimate; the adjusted estimate is the true CCW effect at θ\*, ψ(θ\*) = observed − bias(θ\*). Previously θ\* made the *true* CCW effect equal the observed estimate.
 - **Non-parametric adjustments** (2.7.2–2.7.3): CI from the quantiles of the centred Monte Carlo errors; test from the quantiles of the centred no-effect estimates, with separate lower and upper limits. Parametric versions are kept as a secondary check.
@@ -147,7 +157,7 @@ Estimate (MCSE). Bold: differs from the target by more than 1.96 MCSE. CCW: `r n
 | 3. Predict outcomes | New death times from a Weibull model fitted to the data, in which surgery changes the hazard **from the day it takes place**. Censoring is predicted as well (Section 2.3). |
 | 4. Repeat | `r n0(B)` simulated studies at θ\* and at θ = 0 (`r n0(nrow(sim_results_maringe))` CCW analyses; `r n_fail` failed). |
 | 5. Re-analyse | The same CCW function as on the real data. |
-| 6. Quantify | Bias, CI coverage, type I error and power, each with Monte Carlo SE. |
+| 6. Quantify | Bias, RMSE (and MSE = RMSE²), CI coverage and type I error, each with Monte Carlo SE. |
 | 7. Adjust | Inverse calibration and bias correction; non-parametric CI and test; checked in independent studies (Section 4) and by a nested simulation (Section 5). |
 
 ## 1.1 Data and analysis
@@ -296,9 +306,9 @@ knitr::include_graphics(fig_png("fig_distribution"), error = FALSE)
 
 **Coverage.** The empirical SE is `r f3(po$emp_se)`, the average robust SE `r f3(po$mod_se)` (`r pct(abs(po$rel_err_modse))` `r if (po$rel_err_modse < 0) "too small" else "too large"`). Coverage is `r pct(po$coverage)` (MCSE `r pct(po$coverage_mcse)`). The misses are lopsided: `r pct(cc("CI entirely below truth")$value)` of CIs lie entirely below the true HR and `r pct(cc("CI entirely above truth")$value)` above (2.5% each expected), because estimates and SEs are correlated.
 
-**Type I error.** With no surgery effect, `r pct(pn$reject_0, 3)` (MCSE `r pct(pn$reject_0_mcse, 3)`) of studies reject H0: HR = 1 at 5%; `r pct(pn$reject_0_lower, 3)` in favour of surgery. The no-effect estimates are centred at HR `r hr(pn$mean_est)`.
+**Type I error.** With no surgery effect, `r pct(pn$reject_0, 3)` (MCSE `r pct(pn$reject_0_mcse, 3)`) of studies reject H0: HR = 1 at 5%; `r pct(pn$reject_0_fav, 3)` in favour of surgery. The no-effect estimates are centred at HR `r hr(pn$mean_est)`.
 
-**Power** at θ\* is `r pct(po$reject_0)`.
+**RMSE.** At θ\*, RMSE = `r f3(cc("RMSE")$value)` (MCSE `r f3(cc("RMSE")$mcse)`) and MSE = RMSE² = `r formatC(cc("MSE")$value, format = "f", digits = 4)` (MCSE `r formatC(cc("MSE")$mcse, format = "f", digits = 4)`); MSE = bias² + empirical SE² up to the Monte Carlo error of the truth.
 
 # 4. Simple adjustment (paper 2.7.1–2.7.3)
 
@@ -321,7 +331,7 @@ knitr::kable(table_results_maringe$performance,
 ```
 
 ```{r fig-perf}
-#| fig-cap: "Bias, 95% CI coverage, type I error and power: CCW as published, simple non-parametric adjustment (independent studies) and nested simulation. Bars: 95% Monte Carlo interval. Dashed: nominal value."
+#| fig-cap: "Bias, RMSE, 95% CI coverage and type I error: CCW as published, simple non-parametric adjustment (independent studies) and nested simulation. Bars: 95% Monte Carlo interval. Dashed: nominal value."
 #| out-width: "100%"
 knitr::include_graphics(fig_png("fig_performance"), error = FALSE)
 ```
@@ -369,7 +379,93 @@ excess <- sqrt(max(0, ns$bias_r_sd^2 - ns$bias_r_within_mcse^2))
 - **Nested CI of the observed analysis:** the centred 2.5% and 97.5% quantiles of the outer bias-adjusted estimates (`r f3(ns$q_lo)`, `r f3(ns$q_hi)`) added to the adjusted estimate, so it includes the variation of the estimated bias correction.
 - With `r ns$n_inner` inner studies, each outer CI and rejection limit rests on few tail studies; this noise is part of what the nested coverage and type I error measure. More inner studies (`nested: inner` in `config/config.yml`) bring the nested results closer to those of the procedure as applied to the study data (`r n0(B)` studies).
 
-# 6. Alignment with the draft paper (version 0.64, 17 Oct) {#alignment}
+# 6. Additional analyses (paper 4.6) {#additional}
+
+## 6.1 Survival difference at 12 months
+
+Same data, clones, weights and prediction model; the estimand is the difference between the weighted proportions alive at day 365 (arm 1 − arm 0, IPC-weighted, Hájek form; SE from the patient-clustered influence function with the weights treated as known). Direction: a larger difference favours surgery, so the rejection direction and the "favouring" rates are mirrored relative to the log HR. Calibration starts at θ = −0.7 as well. Differences are in percentage points.
+
+```{r surv12}
+s12 <- adjustment_maringe_surv12
+c12 <- function(m) perf_compare_maringe_surv12[analysis == "CCW" & method == "Wald (robust SE)" & measure == m]
+```
+
+Observed difference `r f2(100 * s12$est_obs)` points; calibrated θ\* = `r f3(calibration_maringe_surv12$theta_cal)` (HR `r hr(calibration_maringe_surv12$theta_cal)`) after `r calibration_maringe_surv12$n_eval` evaluations. Adjusted difference `r f2(100 * s12$est_adj)` points (non-parametric CI `r f2(100 * s12$ci_lo_np)` to `r f2(100 * s12$ci_hi_np)`).
+
+```{r tab-surv12}
+#| tbl-cap: "12-month survival difference: observed analysis and performance (percentage points; MSE in squared points)."
+knitr::kable(table_results_maringe_surv12$performance,
+             col.names = c("Performance measure", "CCW as published", "Simple adjustment", "Nested simulation"),
+             align = "lrrr")
+```
+
+## 6.2 Generalized-gamma prediction model
+
+The Weibull baseline is replaced by a three-parameter generalized gamma (flexsurv parametrisation with μ = 0, free scale σ and shape Q; Weibull at Q = 1), proportional hazards in the covariates and a time-varying surgery effect; outcomes are simulated by inversion. It runs in its own store (`R_CONFIG_ACTIVE=gengamma`, `_targets_gengamma`), so the paper run is untouched.
+
+```{r gengamma}
+gg_store <- file.path(root, "_targets_gengamma")
+has_gg <- tryCatch(
+  dir.exists(gg_store) && "perf_compare_maringe" %in% targets::tar_meta(store = gg_store)$name,
+  error = function(e) FALSE
+)
+```
+
+```{r tab-gengamma, eval = has_gg}
+#| tbl-cap: "Weibull and generalized-gamma prediction model: log HR, simple adjustment (independent studies)."
+pg <- targets::tar_read(perf_compare_maringe, store = gg_store)
+pick <- function(x, lab) x[analysis %in% c("CCW", "Simple adjustment") & method %in% c("Wald (robust SE)", "Non-parametric") &
+                           measure %in% c("Bias", "RMSE", "95% CI coverage", "Type I error"),
+                           .(Model = lab, Analysis = analysis, Measure = measure, Value = value, MCSE = mcse)]
+knitr::kable(rbind(pick(pf, "Weibull"), pick(pg, "Generalized gamma")), digits = 4)
+```
+
+```{r gg-note, eval = !has_gg, results = "asis"}
+cat("*Not run in this report: `_targets_gengamma` does not exist yet.*\n")
+```
+
+## 6.3 Estimator that is not consistent: hypothetical-trial target
+
+If the pipeline's own probability limit is not the target (the CCW estimator censors at the end of the grace period, or, as here, the analysis is deliberately inconsistent), ψ is replaced by the log HR of a hypothetical randomised trial in the simulated world. Assumptions of this implementation (config `rct`): each patient is in both arms; arm 1 gets surgery at the patient's own date if it falls within 180 days, otherwise at a date drawn from the observed in-window dates; arm 0 has no surgery and is censored at day 181; unweighted Cox model. Only the truth changes, so the same replicates and inner runs are reused.
+
+```{r rct}
+rt <- truth_table_rct_maringe
+r_o <- rt[scenario == "observed"]; r_n <- rt[scenario == "null"]
+ra <- adjustment_rct_maringe
+rns <- nested_rct_maringe$summary
+pr <- function(an, meth, m) perf_compare_rct_maringe[analysis == an & method == meth & measure == m]
+```
+
+Target at θ\*: HR `r hr(r_o$truth)` (CCW limit: `r hr(adj$truth)`); at no effect: HR `r hr(r_n$truth)` (CCW limit `r hr(tn$truth)`). Adjusted HR `r hr(ra$est_adj)` (`r ci(ra$ci_lo_np, ra$ci_hi_np)`) with the simple adjustment, `r ci(rns$ci_lo_np, rns$ci_hi_np)` nested. Bias of the observed analysis against this target: `r vb(pr("CCW", "Wald (robust SE)", "Bias"))`; coverage `r vp(pr("CCW", "Wald (robust SE)", "95% CI coverage"))`; after the simple adjustment `r vp(pr("Simple adjustment", "Non-parametric", "95% CI coverage"))`, nested `r vp(pr("Nested adjustment", "Non-parametric", "95% CI coverage"))`.
+
+```{r tab-rct}
+#| tbl-cap: "Performance against the hypothetical-trial target."
+knitr::kable(table_results_rct_maringe$performance,
+             col.names = c("Performance measure", "CCW as published", "Simple adjustment", "Nested simulation"),
+             align = "lrrr")
+```
+
+## 6.4 Outer and inner runs of the nested simulation (paper Appendix) {#allocation}
+
+A pilot of `r allocation_maringe$n_outer_pilot` outer × `r allocation_maringe$R_pilot` inner runs gives the variance decomposition Var~obs~ = V + σ~w~²/R of the bias-adjusted estimates.
+
+```{r alloc}
+al <- allocation_maringe
+```
+
+σ~w~² = `r formatC(al$sigma_w2, format = "e", digits = 2)`, V = `r formatC(al$V, format = "e", digits = 2)`, k = σ~w~²/V = `r f2(al$k)`. Cost of an outer replicate without inner runs c~o~ = `r f2(al$c_o_sec)` s, of one inner run c~i~ = `r formatC(al$c_i_sec, format = "f", digits = 3)` s (directly timed: `r formatC(al$c_study_direct_sec, format = "f", digits = 3)` s), ratio `r f2(al$cost_ratio)`. Optimal R\* = (k/2)(1 + √(1 + 8c~o~/(k c~i~))) = `r f2(al$R_star)` (rounded: `r al$R_variance`); outer runs for a 2% relative MCSE of the empirical SE: B = `r n0(al$B_precision)` (percentile limits: at least `r n0(al$B_rec)`). R\* minimises the variance of V̂ per unit cost, but the limits of each outer CI and test are quantiles of its inner studies, and these are too narrow with few of them (table below); the recommended design therefore uses R = `r al$R_rec` (`nested: inner`). Compute (CPU time, pilot machine): B = `r n0(al$B_rec)` × R = `r al$R_rec` takes `r f2(al$cost_rec_cpu_h)` h, B × R\* `r f2(al$cost_rstar_cpu_h)` h, the former 500 × 250 `r f2(al$cost_current_cpu_h)` h; the relative variance of V̂ is `r f2(al$relvar_current / al$relvar_rec_same_cost)` times larger for 500 × 250 than for the recommended split at equal cost. Shrink factor of the outer deviations √(V/Var~obs~) = `r f3(al$shrink_factor)` (applied only if `nested: shrink: true`).
+
+```{r tab-limits}
+#| tbl-cap: "Width of the centred 2.5%-97.5% limits of one outer dataset's inner studies, by number of inner studies, relative to the largest."
+knitr::kable(pilot_limits_maringe, digits = 3, col.names = c("Inner studies", "Mean width (log HR)", "Relative width"))
+```
+
+```{r tab-anova}
+#| tbl-cap: "V = Var_obs(r) − σ_w²/r with the first r inner runs: it should not depend on r."
+knitr::kable(pilot_anova_maringe, digits = 6, col.names = c("r", "Var_obs", "σ_w²", "V"))
+```
+
+# 7. Alignment with the draft paper (version 0.65, 24 Oct) {#alignment}
 
 | Draft paper | This run |
 |---|---|
@@ -382,13 +478,21 @@ excess <- sqrt(max(0, ns$bias_r_sd^2 - ns$bias_r_within_mcse^2))
 | 4.5 / Table 3: bias −0.015, coverage 93.6%, type I error 7.5% (7.6% in the text) | Bias `r f3(po$bias)`, coverage `r pct(po$coverage)`, type I error `r pct(pn$reject_0, 3)`. |
 | 4.5: adjusted HR 0.6301, CI 0.37–1.08 | Simple: `r hr(adj$est_adj)` (`r ci(adj$ci_lo_np, adj$ci_hi_np)`); nested: `r ci(ns$ci_lo_np, ns$ci_hi_np)`. |
 | Table 2: "Calibrated critical value \|z\| for a 5% test 2.17" | Replaced by non-parametric limits; centred parametric critical value `r f2(adj$z_crit_par)`. |
+| Start of the inverse calibration at θ = −0.7; grace period 180 days | **Implemented** (`calibration: start`, `grace`); θ\* = `r f3(cal$theta_cal)` after `r cal$n_eval` evaluations. |
+| Endpoint: survival at 12 months (binary) | **Implemented** (Section 6.1). |
+| RMSE and RMSE² in all outputs; no power | **Implemented** (Sections 1, 3, 4, A1). |
+| 4.6: generalized-gamma prediction model | **Implemented** (Section 6.2; own store). |
+| 4.6: bias correction for an estimator that is not consistent | **Implemented** (Section 6.3; hypothetical-trial target). |
+| Appendix: optimal outer / inner split from a pilot | **Implemented** (Section 6.4); production `nested: outer` × `inner` = `r cfg$nested$outer` × `r cfg$nested$inner`. |
 | Comment on Figure 3: CI coverage not centred on 95% | Under adjustment: `r pct(sa("95% CI coverage")$value)` (simple), `r pct(na("95% CI coverage")$value)` (nested), with MCSE in Section 4. |
 
-# 7. Caveats and next steps
+# 8. Caveats and next steps
 
 - **Truth definition.** ψ(θ) is the probability limit of the CCW analysis itself (paper 2.7.1). Any offset CCW keeps with unlimited data (here ψ(0) = `r f3(tn$psi_large_sample)`) is therefore part of the truth at θ\*, not of the bias. Defining ψ instead from pseudo-populations simulated under each strategy (one reading of 2.7.1 step 6c–e) would count that offset as bias.
 - Truths are simulated (MCSE `r f3(adj$truth_mcse)`); this is included in the bias MCSE.
 - The nested results carry the Monte Carlo error of `r ns$n_outer` outer datasets and `r ns$n_inner` inner studies; increase both for the paper run if the precision is not sufficient.
+- **Hypothetical trial (6.3).** The construction of the surgery arm and of the control censoring at day 181 is an implementation assumption; `rct: control_censor_day: null` follows the control arm to the end instead.
+- **Risk difference (6.1).** The SE treats the IPC weights as known, as for the log HR.
 - The Word draft of paper Section 4 (`reports/paper/section4_draft.docx`) uses the same results.
 
 # Appendix
@@ -401,10 +505,11 @@ tab <- performance_maringe[, .(
   `θ (DGM)` = f2(theta), `True HR` = hr(truth), `Mean HR` = hr(mean_est),
   `Bias (log HR)` = f3(bias), MCSE = f3(bias_mcse_total),
   `Emp. SE` = f3(emp_se), `Model SE` = f3(mod_se),
-  Coverage = pct(coverage), `Reject HR = 1` = pct(reject_0, 3),
+  RMSE = f3(rmse), MSE = formatC(mse, format = "f", digits = 4), Coverage = pct(coverage),
+  `Reject HR = 1` = pct(reject_0, 3),
   `Mean deaths` = formatC(mean_outcomes, format = "f", digits = 1), Failed = n_fail
 )]
-knitr::kable(tab, align = "lrrrrrrrrrrr")
+knitr::kable(tab, align = "lrrrrrrrrrrrrr")
 ```
 
 ## A2. Data-generating mechanism

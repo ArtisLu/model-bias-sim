@@ -59,6 +59,13 @@ test_that("recommend_allocation reads the pilot and reports costs and the curren
   expect_equal(a$B_precision, 1251L)
   expect_equal(a$B_rec, 1251L)
   expect_gte(a$R_rec, 2L)
+  expect_equal(a$R_rec, a$R_variance)
+  # Enough inner runs for the limits of the outer CIs override the variance optimum
+  pc$min_inner_limits <- 50
+  a2 <- recommend_allocation(p, pc, list(outer = 500, inner = 250), c_study = 0.25)
+  expect_equal(a2$R_rec, max(a$R_variance, 50L))
+  expect_equal(a2$R_variance, a$R_variance)
+  expect_gt(a2$cost_rec_cpu_h, a$cost_rec_cpu_h)
   expect_equal(a$R_star, optimal_inner(a$k, a$c_o_sec, a$c_i_sec))
   expect_gt(a$cost_current_cpu_h, 0)
   expect_lt(a$relvar_rec_same_cost, a$relvar_current)
@@ -82,4 +89,18 @@ test_that("pilot batch keeps the inner estimates and the ANOVA is stable across 
   # With all inner runs the check reproduces the summary of the nested function
   full <- nested_variance_components(ok$est_adj, ok$mean_inner_mcse^2 * ok$n_inner_ok, 6)
   expect_equal(an[r == 6, var_obs], full$var_obs, tolerance = 1e-8)
+})
+
+test_that("limits from few inner runs are too narrow", {
+  set.seed(13)
+  B <- 60; R <- 50
+  inner <- lapply(seq_len(B), function(i) rnorm(R, 0, 0.3))
+  p <- data.table(est_adj = rnorm(B), inner_est = inner)
+  w <- limit_width_by_inner_runs(p, c(5, 11, 25, 50))
+  expect_equal(w$r, c(5, 11, 25, 50))
+  expect_true(all(diff(w$width[1:3]) > 0))
+  expect_equal(w$width_rel[4], 1)
+  expect_lt(w$width_rel[2], 0.9)
+  # The range of 11 draws covers a new draw with probability 10/12
+  expect_equal(w$width[4], 2 * 1.96 * 0.3, tolerance = 0.1)
 })

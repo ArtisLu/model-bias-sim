@@ -2,7 +2,8 @@
 # targets store. Run from the project root after targets::tar_make():
 #   source("reports/paper/build_section4.R")
 # Kept outside the pipeline while the wording is being iterated; reads run times from tar_meta().
-# Numbering follows manuscript v0.64 (17 Oct 2026): Table 1, Figures 2-3 in 4.1-4.4.
+# Numbering follows manuscript v0.65 (24 Oct 2026): Table 1, Figures 2-3 in 4.1-4.4; 4.6 and the
+# Appendix are added from the extra analyses when their targets exist in the store.
 
 # Text contains en dashes and Greek letters; R >= 4.2 on Windows is UTF-8 by default
 if (!isTRUE(l10n_info()[["UTF-8"]])) message("Run R in a UTF-8 locale, e.g. LANG=C.UTF-8")
@@ -226,7 +227,8 @@ doc <- txt(doc, paste0(
   "and ", n0(B), " with no treatment effect (θ = 0), each reanalysed with the reference model. Replicate b ",
   "used the same random numbers in both scenarios (common random numbers). Performance measures were the ",
   "bias of the log HR, the empirical and the model-based (robust) standard error, the coverage of the ",
-  "nominal 95% CI and the rejection rate of H0: HR = 1 (power at θ*, type I error at θ = 0), each with its ",
+  "nominal 95% CI, the root mean squared error (RMSE) with its square (MSE) and the rejection rate of ",
+  "H0: HR = 1 under no effect (type I error), each with its ",
   "Monte Carlo standard error (MCSE); the MCSE of the bias includes the Monte Carlo error of the true value. ",
   "Failed model fits were recorded and excluded (n = ", n_fail, ")."
 ))
@@ -291,9 +293,10 @@ doc <- txt(doc, paste0(
   f1(abs(100 * po$std_bias)), "% of the empirical SE), 95% CI coverage of ", pc(po$coverage),
   " (MCSE ", pc(po$coverage_mcse), ")", if (cov_sig) ", significantly below 95%," else "",
   " and a type I error rate of ", pc(pn$reject_0, 3), " (MCSE ", pc(pn$reject_0_mcse, 3), ")",
-  if (t1_sig) ", significantly above 5%" else "", "; ", pc(pn$reject_0_lower, 3),
+  if (t1_sig) ", significantly above 5%" else "", "; ", pc(pn$reject_0_fav, 3),
   " of the no-effect datasets were rejections in favour of surgery. The empirical SE was ", f3(po$emp_se),
-  ", while the average robust SE was ", f3(po$mod_se), ". Power at θ* was ", pc(po$reject_0), " (Table 3)."
+  ", while the average robust SE was ", f3(po$mod_se), ". The RMSE was ", f3(po$rmse), " (MSE ",
+  f4(po$mse), ", MCSE ", f4(po$mse_mcse), ") (Table 3)."
 ))
 doc <- txt(doc, paste0(
   "The original value of HR = ", f4(exp(obs_result$estimate)), " was corrected to HR = ", f4(exp(adj$est_adj)),
@@ -303,9 +306,10 @@ doc <- txt(doc, paste0(
   f4(exp(adj$null_mean + adj$null_q_lo)), " or above ", f4(exp(adj$null_mean + adj$null_q_hi)),
   "; the simulation-calibrated p-value is ", f3(adj$p_np), " (original p = ", f3(adj$p_obs), "). ",
   "In ", n0(n_val), " independent datasets per scenario, the adjusted analysis had a bias of ",
-  f3(sa("Bias (log HR)")$value), " (MCSE ", f3(sa("Bias (log HR)")$mcse), "), 95% CI coverage of ",
+  f3(sa("Bias")$value), " (MCSE ", f3(sa("Bias")$mcse), "), 95% CI coverage of ",
   pc(sa("95% CI coverage")$value), " (MCSE ", pc(sa("95% CI coverage")$mcse), ") and a type I error ",
-  "rate of ", pc(sa("Type I error")$value, 3), " (MCSE ", pc(sa("Type I error")$mcse, 3), ")",
+  "rate of ", pc(sa("Type I error")$value, 3), " (MCSE ", pc(sa("Type I error")$mcse, 3), ") and an RMSE of ",
+  f3(sa("RMSE")$value), " (MSE ", f4(sa("MSE")$value), ")",
   # A learned rule's two 2.5% limits come from B studies, so its true rate varies by lim_sd
   if (off(sa("Type I error")) && abs(z_tot(sa("Type I error"), B)) <= 1.96) {
     paste0(", a deviation from 5% within the Monte Carlo error of the rejection limits themselves, ",
@@ -334,7 +338,7 @@ doc <- caption(doc, "Table 2: ", "Results (1): observed analysis, calibration an
 doc <- body_add_flextable(doc, two_col_ft(table_results$analysis, "", "Value"), align = "left")
 doc <- note(doc, "HR: surgery within 6 months versus no surgery within 6 months. ψ(θ): true CCW log HR (probability limit of the reference analysis) when the Weibull prediction model has on-treatment log HR θ. MCSE: Monte Carlo standard error.")
 doc <- body_add_par(doc, "")
-doc <- caption(doc, "Table 3: ", "Results (2): performance of the CCW analysis, the simple adjustment and the nested simulation (estimate (MCSE))")
+doc <- caption(doc, "Table 3: ", "Results (2): performance of the CCW analysis, the simple adjustment and the nested simulation (estimate (MCSE)); MSE = RMSE²")
 doc <- body_add_flextable(doc, perf_ft(table_results$performance), align = "left")
 doc <- note(doc, paste0(
   "CCW as published: ", n0(B), " datasets per scenario. Simple adjustment: non-parametric correction, CI ",
@@ -344,12 +348,104 @@ doc <- note(doc, paste0(
 ))
 
 doc <- body_add_break(doc)
-doc <- caption(doc, "Figure 4: ", "Bias, 95% CI coverage, type I error and power of the CCW analysis as published, after the simple non-parametric adjustment and in the nested simulation. Points: estimates; bars: 95% Monte Carlo intervals (±1.96 MCSE); dashed lines: nominal values.")
-doc <- add_fig(doc, file.path(fig_dir, "fig_performance.png"), 6.5, 6.5 * 4.4 / 13)
+doc <- caption(doc, "Figure 4: ", "Bias, RMSE, MSE, 95% CI coverage and type I error of the CCW analysis as published, after the simple non-parametric adjustment and in the nested simulation. Points: estimates; bars: 95% Monte Carlo intervals (±1.96 MCSE); dashed lines: nominal values.")
+doc <- add_fig(doc, file.path(fig_dir, "fig_performance.png"), 6.5, 6.5 * 4.4 / 15)
 doc <- caption(doc, "Figure 5: ", "Histograms of MC estimates: CCW estimates at the calibrated generating value θ* (left) and with no treatment effect (right), with the true values and the non-parametric rejection limits of the 5% test.")
 doc <- add_fig(doc, file.path(fig_dir, "fig_distribution.png"), 6.5, 6.5 * 4.6 / 12)
 doc <- caption(doc, "Figure 6: ", "Nested simulation: estimated bias correction (left) and bias-adjusted estimate (right) across outer datasets.")
 doc <- add_fig(doc, file.path(fig_dir, "fig_nested.png"), 6.5, 6.5 * 4.6 / 12)
+
+# ---- Additional endpoint: survival at 12 months ---------------------------------------
+read_ds <- function(nm, ds_name, st = store) {
+  tryCatch(targets::tar_read_raw(paste0(nm, "_", ds_name), store = st), error = function(e) NULL)
+}
+rd_ds <- "maringe_surv12"
+table_rd <- read_ds("table_results", rd_ds)
+if (!is.null(table_rd)) {
+  adj_rd <- read_ds("adjustment", rd_ds)
+  pc_rd <- read_ds("perf_compare", rd_ds)
+  pp <- function(x, d = 1) formatC(100 * x, format = "f", digits = d)
+  doc <- body_add_break(doc)
+  doc <- head2(doc, "4.5b Additional endpoint: survival at 12 months")
+  doc <- txt(doc, paste0(
+    "As in Maringe et al. [35], the effect is also expressed as the difference in survival at 12 months ",
+    "between the strategies (surgery minus no surgery), estimated from the same cloned, censored and ",
+    "weighted data as the weighted proportion alive at day ", cfg$datasets[[rd_ds]]$pipeline$surv_time,
+    " among clones still uncensored, with a patient-clustered SE. The observed difference was ",
+    pp(adj_rd$est_obs), " percentage points (95% CI ", pp(adj_rd$ci_lo_obs), " to ", pp(adj_rd$ci_hi_obs), "); ",
+    "calibration gave a generating HR of ", f4(exp(read_ds("calibration", rd_ds)$theta_cal)), ". The bias was ",
+    pp(adj_rd$bias, 2), " points (MCSE ", pp(adj_rd$bias_mcse, 2), "); the bias-adjusted difference was ",
+    pp(adj_rd$est_adj), " points (non-parametric 95% CI ", pp(adj_rd$ci_lo_np), " to ", pp(adj_rd$ci_hi_np), ")."
+  ))
+  doc <- caption(doc, "Table 3b: ", "Results for the difference in 12-month survival: observed analysis, calibration and QBA adjustment (percentage points)")
+  doc <- body_add_flextable(doc, two_col_ft(table_rd$analysis, "", "Value"), align = "left")
+  doc <- body_add_par(doc, "")
+  doc <- caption(doc, "Table 3c: ", "Performance for the difference in 12-month survival (estimate (MCSE), percentage points)")
+  doc <- body_add_flextable(doc, perf_ft(table_rd$performance), align = "left")
+}
+
+# ---- 4.6 Additional analyses ------------------------------------------------------
+table_rct <- read_ds("table_results_rct", ds)
+table_gg <- read_ds("table_results", ds, "_targets_gengamma")
+if (!is.null(table_rct) || !is.null(table_gg)) {
+  doc <- head2(doc, "4.6 Additional analyses")
+}
+if (!is.null(table_gg)) {
+  adj_gg <- read_ds("adjustment", ds, "_targets_gengamma")
+  dgm_gg <- read_ds("dgm", ds, "_targets_gengamma")
+  doc <- txt(doc, paste0(
+    "As a sensitivity analysis, a more flexible prediction model was applied: the Weibull baseline was ",
+    "replaced by a three-parameter generalized gamma baseline (scale σ = ", f2(dgm_gg$sigma), ", shape Q = ",
+    f2(dgm_gg$Q), "; Q = 1 is the Weibull; log-likelihood ", f2(dgm_gg$loglik), " versus ",
+    f2(dgm_gg$loglik_weibull), "), keeping the proportional-hazards form and the time-varying surgery effect. ",
+    "The calibrated generating HR was ", f4(exp(read_ds("calibration", ds, "_targets_gengamma")$theta_cal)),
+    " and the bias-adjusted HR ", f4(exp(adj_gg$est_adj)), " (non-parametric 95% CI ", f4(exp(adj_gg$ci_lo_np)),
+    "; ", f4(exp(adj_gg$ci_hi_np)), "), against ", f4(exp(adj$est_adj)), " (", f4(exp(adj$ci_lo_np)), "; ",
+    f4(exp(adj$ci_hi_np)), ") with the Weibull model. Full results are in Table S3."
+  ))
+}
+if (!is.null(table_rct)) {
+  adj_rct <- targets::tar_read_raw(paste0("adjustment_rct_", ds), store = store)
+  ns_rct <- targets::tar_read_raw(paste0("nested_rct_", ds), store = store)$summary
+  tt_rct <- targets::tar_read_raw(paste0("truth_table_rct_", ds), store = store)
+  doc <- txt(doc, paste0(
+    "A further analysis does not assume that the analysis pipeline is asymptotically unbiased, which ",
+    "requires another way to derive the target estimand: a hypothetical randomised trial in the simulated ",
+    "world, analysed without weights. Each patient of the data enters both arms; in the surgery arm surgery ",
+    "takes place at the patient's observed date (within the grace period) or, for patients without surgery ",
+    "within the grace period, at a date drawn from the observed dates; the arm without surgery is censored ",
+    "at day ", cfg$rct$control_censor_day, ". Outcomes are predicted by the prediction model, with a new ",
+    "prediction for every copy of a patient in datasets of about ", n_big(cfg$truth$n_target), " patients. ",
+    "The trial HR at θ* is ", f4(exp(adj_rct$truth)), " (CCW pipeline limit ", f4(exp(adj$truth)), "), so the ",
+    "bias becomes ", f3(adj_rct$bias), " (MCSE ", f3(adj_rct$bias_mcse), "). The adjusted HR is ",
+    f4(exp(adj_rct$est_adj)), " (non-parametric 95% CI ", f4(exp(adj_rct$ci_lo_np)), "; ", f4(exp(adj_rct$ci_hi_np)),
+    "; nested CI ", f4(exp(ns_rct$ci_lo_np)), "; ", f4(exp(ns_rct$ci_hi_np)), "). These results matter because the ",
+    "pipeline remained centred at HR = ", f4(exp(tn$psi_large_sample)), " instead of 1 for large samples under the null (Table X)."
+  ))
+  doc <- caption(doc, "Table X: ", "Results when not assuming a consistent estimator (target: unweighted hypothetical trial)")
+  doc <- body_add_flextable(doc, two_col_ft(table_rct$analysis, "", "Value"), align = "left")
+  doc <- body_add_par(doc, "")
+  doc <- body_add_flextable(doc, perf_ft(table_rct$performance), align = "left")
+}
+
+# ---- Appendix: outer / inner split ---------------------------------------------------
+alloc <- read_ds("allocation", ds)
+if (!is.null(alloc)) {
+  doc <- body_add_break(doc)
+  doc <- head2(doc, "Appendix: split of the nested simulation into outer and inner runs (pilot study)")
+  doc <- txt(doc, paste0(
+    "Pilot: ", alloc$n_outer_pilot, " outer datasets × ", alloc$R_pilot, " inner runs. Spread of the bias-adjusted ",
+    "estimate across outer datasets ", f4(alloc$var_obs), " (variance); inner single-run variance σ_w² = ",
+    f4(alloc$sigma_w2), "; V̂ = ", f4(alloc$V), "; k = σ_w²/V̂ = ", f2(alloc$k), ". Measured cost: c_o = ",
+    f2(alloc$c_o_sec), " s per outer dataset without inner runs, c_i = ", f3(alloc$c_i_sec), " s per inner run ",
+    "(including all calibration steps; ", f2(alloc$mean_eval), " steps on average); c_o/c_i = ",
+    f1(alloc$cost_ratio), ". The optimum R* = ", f1(alloc$R_star), " inner runs; ", alloc$B_precision,
+    " outer datasets give a 2% relative MCSE of the empirical SE, and ", alloc$B_rec, " are used so that the percentile ",
+    "limits are stable. Recommended: ", alloc$B_rec, " outer × ", alloc$R_rec, " inner runs (",
+    f1(alloc$cost_rec_cpu_h), " CPU hours) instead of ", cfg$nested$outer, " × ", cfg$nested$inner, " (",
+    f1(alloc$cost_current_cpu_h), " CPU hours)."
+  ))
+}
 
 # Supplement
 doc <- body_add_break(doc)
@@ -360,6 +456,13 @@ doc <- note(doc, paste0(dgm$n_events, " deaths. Surgery enters as a time-varying
 doc <- caption(doc, "Table S2: ", "Coverage of the 95% CI variants")
 doc <- body_add_flextable(doc, ci_var_ft(table_results$ci_variants), align = "left")
 doc <- note(doc, "Non-parametric: centred MC quantiles added to the bias-adjusted estimate (Section 2.7.2). Reflected: [estimate − q97.5; estimate − q2.5]. Parametric: robust SE multiplied by the CI inflation factor. Below/above: CIs entirely below/above the true value (2.5% each expected).")
+
+if (!is.null(table_gg)) {
+  doc <- caption(doc, "Table S3: ", "Sensitivity analysis with a generalized gamma prediction model")
+  doc <- body_add_flextable(doc, two_col_ft(table_gg$analysis, "", "Value"), align = "left")
+  doc <- body_add_par(doc, "")
+  doc <- body_add_flextable(doc, perf_ft(table_gg$performance), align = "left")
+}
 
 bw <- balance[weighting == "Weighted"]
 bu <- balance[weighting == "Unweighted"]

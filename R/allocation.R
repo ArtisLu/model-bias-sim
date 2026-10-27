@@ -89,7 +89,30 @@ anova_by_inner_runs <- function(pilot, r_grid) {
   }))
 }
 
+#' Width of the per-outer-dataset limits from the inner studies, by number of inner runs
+#' The centred 2.5% and 97.5% quantiles of r inner estimates are the limits of the outer CI; with few
+#' inner runs they are too narrow (the range of r draws covers a new draw with probability (r-1)/(r+1)).
+#' @param pilot Pilot outer replicates with list column `inner_est`; @param r_grid Inner runs to use.
+#' @param level Nominal level.
+#' @return data.table: r, width (mean over outer replicates), width_rel (relative to the largest r).
+limit_width_by_inner_runs <- function(pilot, r_grid, level = 0.95) {
+  p <- pilot[!is.na(est_adj) & lengths(inner_est) > 0]
+  R <- min(lengths(p$inner_est))
+  out <- data.table::rbindlist(lapply(r_grid[r_grid <= R], function(r) {
+    w <- vapply(p$inner_est, function(e) {
+      q <- centred_quantiles(e[seq_len(r)], level)
+      q[["q_hi"]] - q[["q_lo"]]
+    }, numeric(1))
+    data.table::data.table(r = r, width = mean(w))
+  }))
+  out[, width_rel := width / width[which.max(r)]]
+  out[]
+}
+
 #' Recommended split from the pilot study (paper Appendix, practical recipe steps 1-3)
+#' R* minimises the variance of V-hat per unit cost. The limits of the outer CIs and tests are
+#' quantiles of the inner studies and are too narrow with few of them, so the recommended R is at
+#' least `pc$min_inner_limits` (if set).
 #' @param pilot Pilot outer replicates at theta* (as `nested_obs`); @param pc Pilot settings
 #'   (`cfg$pilot`); @param current The production design list(outer, inner) for comparison.
 #' @param c_study Directly timed seconds per inner study (cross-check of the cost split).
@@ -105,7 +128,8 @@ recommend_allocation <- function(pilot, pc, current, c_study = NA_real_) {
   c_o <- max(mean(p$seconds - p$seconds_cal), 1e-6)
   k_use <- if (is.finite(cp$k)) cp$k else 1
   r_star <- optimal_inner(k_use, c_o, c_i)
-  r_rec <- max(2L, as.integer(round(r_star)))
+  r_var <- max(2L, as.integer(round(r_star)))
+  r_rec <- if (is.null(pc$min_inner_limits)) r_var else max(r_var, as.integer(pc$min_inner_limits))
   b_prec <- outer_for_precision(pc$precision_rel_se)
   b_rec <- max(b_prec, pc$min_outer_percentile)
   cost <- function(B, R) B * (c_o + R * c_i)
@@ -115,8 +139,10 @@ recommend_allocation <- function(pilot, pc, current, c_study = NA_real_) {
     n_outer_pilot = nrow(p), R_pilot = R0, var_obs = cp$var_obs, sigma_w2 = cp$sigma_w2, V = cp$V,
     k = cp$k, shrink_factor = cp$shrink, mean_eval = n_eval,
     c_o_sec = c_o, c_i_sec = c_i, c_study_direct_sec = c_study, cost_ratio = c_o / c_i,
-    R_star = r_star, R_rec = r_rec, B_precision = b_prec, B_rec = b_rec,
+    R_star = r_star, R_variance = r_var, R_rec = r_rec, B_precision = b_prec, B_rec = b_rec,
     cost_rec_cpu_h = cost(b_rec, r_rec) / 3600,
+    cost_rstar_cpu_h = cost(b_rec, r_var) / 3600,
+    relvar_rstar = vv(b_rec, r_var), relvar_rec = vv(b_rec, r_rec),
     cost_current_cpu_h = cost(current$outer, current$inner) / 3600,
     # Same cost as the current design: B that the recommended R would allow, and its precision gain
     B_at_current_cost = floor(cost(current$outer, current$inner) / (c_o + r_rec * c_i)),

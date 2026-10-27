@@ -28,7 +28,7 @@ profile <- Sys.getenv("R_CONFIG_ACTIVE", "default")
 out_dir <- if (profile == "default") "reports" else file.path("reports", profile)
 # Report on the Maringe case study (into out_dir): not in smoke runs, only if Quarto is installed.
 # Kept out of cfg on purpose: every target depends on cfg, so a new key would rerun everything.
-do_report <- "maringe" %in% active && profile != "smoke" &&
+do_report <- all(c("maringe", "maringe_surv12") %in% active) && profile != "smoke" &&
   requireNamespace("quarto", quietly = TRUE) &&
   isTRUE(tryCatch(nzchar(quarto::quarto_path()), error = function(e) FALSE))
 # Parallel workers need crew; without it the pipeline runs sequentially. QBA_WORKERS overrides
@@ -155,8 +155,11 @@ per_dataset <- tar_map(
   ),
   tar_target(pilot_timing, time_inner_run(base_data, dgm, calibration$theta_cal,
                                           cfg$datasets[[ds]]$pipeline, cfg$pilot$timing_reps)),
-  tar_target(allocation, recommend_allocation(pilot_nested, cfg$pilot, cfg$nested, pilot_timing)),
+  # Comparison design: the 500 x 250 split of v0.64
+  tar_target(allocation, recommend_allocation(pilot_nested, cfg$pilot, list(outer = 500, inner = 250),
+                                              pilot_timing)),
   tar_target(pilot_anova, anova_by_inner_runs(pilot_nested, c(5, 10, 20, 30, 50, 100, 250))),
+  tar_target(pilot_limits, limit_width_by_inner_runs(pilot_nested, c(5, 11, 25, 50, 100, 250))),
 
   # Target for a pipeline that is not consistent (paper 4.6): unweighted hypothetical trial, same
   # replicates and inner runs, truth replaced (HR analysis only; other analyses give NULL)
@@ -269,6 +272,10 @@ list(
           dgm_maringe, obs_result_maringe, base_data_maringe, sim_results_maringe,
           truth_table_maringe, table_baseline_maringe, table_results_maringe,
           performance_rsimsum_maringe, balance_maringe, paper_figures_maringe,
+          allocation_maringe, pilot_anova_maringe, pilot_limits_maringe, truth_table_rct_maringe, adjustment_rct_maringe,
+          perf_compare_rct_maringe, nested_rct_maringe, table_results_rct_maringe,
+          performance_maringe_surv12, adjustment_maringe_surv12, perf_compare_maringe_surv12,
+          nested_maringe_surv12, calibration_maringe_surv12, table_results_maringe_surv12,
           fig_protocol_maringe, fig_balance_maringe, run_settings, session
         )
       ), format = "file")
