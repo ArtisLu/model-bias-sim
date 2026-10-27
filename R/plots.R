@@ -63,8 +63,9 @@ plot_comparison <- function(perf_all, labels) {
   d[, metric := factor(metric, levels = unique(metric))]
   ggplot2::ggplot(d, ggplot2::aes(value, label)) +
     ggplot2::geom_vline(ggplot2::aes(xintercept = ref), linetype = "22", colour = viz_cols[["ink2"]]) +
-    ggplot2::geom_errorbarh(ggplot2::aes(xmin = lo, xmax = hi), height = 0, colour = viz_cols[["blue"]],
-                            linewidth = 0.7) +
+    # geom_errorbarh() is deprecated since ggplot2 4.0.0; orientation = "y" works from 3.3.0
+    ggplot2::geom_errorbar(ggplot2::aes(xmin = lo, xmax = hi), orientation = "y", width = 0,
+                           colour = viz_cols[["blue"]], linewidth = 0.7) +
     ggplot2::geom_point(colour = viz_cols[["blue"]], size = 2.8) +
     ggplot2::geom_text(ggplot2::aes(label = formatC(value, format = "f", digits = 1)),
                        vjust = -1.1, size = 3.2, colour = viz_cols[["ink"]]) +
