@@ -6,7 +6,7 @@
 #' Prepare a base dataset
 #' @param file Path to the raw file (read-only source).
 #' @param spec Dataset entry of `cfg$datasets`.
-#' @param name Dataset key ("maringe" or "synpuf").
+#' @param name Data preparation key ("maringe" or "synpuf"; `spec$base` of the analysis).
 #' @return data.table in the common format.
 prepare_base_data <- function(file, spec, name) {
   checkmate::assert_file_exists(file)

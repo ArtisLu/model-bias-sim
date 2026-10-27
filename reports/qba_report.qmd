@@ -1,8 +1,8 @@
 ---
 title: "Does clone-censor-weighting carry modelling bias?"
-subtitle: "Modelling-bias QBA of the CCW analysis in the Maringe lung cancer example"
+subtitle: "Modelling-bias QBA of the CCW analysis in the Maringe lung cancer example: simple and nested adjustment (draft v0.65)"
 author: "Artis Luguzis"
-date: "12 October 2026"
+date: "27 October 2026"
 format:
   html:
     embed-resources: true
@@ -31,9 +31,13 @@ while (!file.exists(file.path(root, "_targets.R")) && dirname(root) != root) roo
 # Results store: passed by the pipeline (one per config profile), else the paper run
 store <- if (nzchar(params$store)) params$store else file.path(root, "_targets")
 targets::tar_load(c(
-  performance_maringe, correction_maringe, calibration_maringe, dgm_maringe, obs_result_maringe,
-  base_data_maringe, sim_results_maringe, truth_table_maringe, perf_adjusted_maringe, ci_methods_maringe, table_ci_methods_maringe, belt_maringe,
-  belt_plan_maringe, table_baseline_maringe, table_results_maringe, performance_rsimsum_maringe, session
+  performance_maringe, adjustment_maringe, validation_maringe, nested_maringe, nested_obs_maringe,
+  nested_null_maringe, perf_compare_maringe, calibration_maringe, dgm_maringe, obs_result_maringe,
+  base_data_maringe, sim_results_maringe, truth_table_maringe, table_baseline_maringe,
+  table_results_maringe, allocation_maringe, pilot_anova_maringe, pilot_limits_maringe, truth_table_rct_maringe,
+  adjustment_rct_maringe, perf_compare_rct_maringe, nested_rct_maringe, table_results_rct_maringe,
+  performance_maringe_surv12, adjustment_maringe_surv12, perf_compare_maringe_surv12,
+  nested_maringe_surv12, calibration_maringe_surv12, table_results_maringe_surv12, session
 ), store = store)
 # Figure targets store paths relative to the project root
 fig <- function(path) file.path(root, path)
@@ -56,69 +60,106 @@ pct <- function(x, d = 1) paste0(formatC(100 * x, format = "f", digits = d), "%"
 hr <- function(x) formatC(exp(x), format = "f", digits = 4)
 ci <- function(lo, hi) paste0(hr(lo), "–", hr(hi))
 cfg <- config::get(file = file.path(root, "config", "config.yml"))
-cfg_belt_b <- config::get(file = file.path(root, "config", "belt.yml"))
-cfg_belt_truth <- cfg_belt_b$truth_n_rep
-spec <- cfg$datasets$maringe
 po <- performance_maringe[scenario == "observed"]
 pn <- performance_maringe[scenario == "null"]
-cr <- correction_maringe
+adj <- adjustment_maringe
+ns <- nested_maringe$summary
 cal <- calibration_maringe
 dm <- dgm_maringe
 bd <- base_data_maringe
 obs <- obs_result_maringe
-adj <- function(m) perf_adjusted_maringe[analysis == "CCW + QBA adjustment" & measure == m]
-cim <- function(m, tg, src = NA) ci_methods_maringe[method == m & scenario == tg & (is.na(src) & is.na(source) | source %in% src)]
-wo <- cim("Wald (robust SE)", "observed")
-wn <- cim("Wald (robust SE)", "null")
-bo <- cim("Confidence belt", "observed", "grid")
-bn <- cim("Confidence belt", "null", "grid")
+tn <- truth_table_maringe[scenario == "null"]
+pf <- perf_compare_maringe
+P <- function(an, meth, m) pf[analysis == an & method == meth & measure == m]
+cc <- function(m) P("CCW", "Wald (robust SE)", m)
+sa <- function(m) P("Simple adjustment", "Non-parametric", m)
+na <- function(m) P("Nested adjustment", "Non-parametric", m)
+# Value (MCSE) in percent, bold when it differs from its target by more than 1.96 MCSE
+off <- function(r) nrow(r) == 1 && !is.na(r$ref) && abs(r$value - r$ref) > 1.96 * r$mcse
+vp <- function(r, d = 1) {
+  if (nrow(r) == 0) return("—")
+  s <- paste0(pct(r$value, d), " (", pct(r$mcse, d), ")")
+  if (off(r)) paste0("**", s, "**") else s
+}
+vb <- function(r) {
+  if (nrow(r) == 0) return("—")
+  s <- paste0(f3(r$value), " (", f3(r$value - 1.96 * r$mcse), " to ", f3(r$value + 1.96 * r$mcse), ")")
+  if (off(r)) paste0("**", s, "**") else s
+}
 B <- po$B
 n_fail <- po$n_fail + pn$n_fail
-bias_ci <- function(p) paste0(f3(p$bias - 1.96 * p$bias_mcse_total), " to ", f3(p$bias + 1.96 * p$bias_mcse_total))
 n_surv <- sum(bd$status == 0)
-meta <- targets::tar_meta(fields = c(name, type, time, seconds), targets_only = TRUE, store = store)
-meta <- meta[meta$type %in% c("stem", "branch"), ]
+# Run-time helpers (current_meta(), observed_workers())
+source(file.path(root, "R", "utils.R"), local = TRUE)
+meta <- targets::tar_meta(fields = c(name, type, time, seconds, children), targets_only = TRUE,
+                          store = store)
+meta <- current_meta(meta)
 mins_all <- sum(meta$seconds, na.rm = TRUE) / 60
 ```
 
 ::: {.callout-important appearance="simple"}
 ## Key answer
 
-**The CCW analysis of the Maringe example carries a small but detectable modelling bias, its 95% CIs under-cover, and its type I error is inflated by about half. The QBA adjustments restore nominal coverage and type I error.** The true CCW effect was set to the observed estimate and the study was replayed `r n0(B)` times on the original `r nrow(bd)` patients; a second set of `r n0(B)` replays checked the case of no surgery effect.
+```{r key-flags}
+bias_sig <- off(cc("Bias"))
+cov_sig <- off(cc("95% CI coverage"))
+t1_sig <- off(cc("Type I error"))
+# A learned rule's two 2.5% limits come from n studies, so its true error rate itself varies by
+# about this SD around the target; the table MCSE treats the learned rule as fixed
+lim_sd <- function(n) sqrt(2 * 0.025 * 0.975 / n)
+z_tot <- function(r, n) (r$value - r$ref) / sqrt(r$mcse^2 + lim_sd(n)^2)
+judge <- function(r, n, d = 1) {
+  if (!off(r)) return(paste0(pct(r$value, d), ", consistent with ", pct(r$ref, 0)))
+  side <- if (r$value > r$ref) "above" else "below"
+  if (abs(z_tot(r, n)) <= 1.96) {
+    paste0(pct(r$value, d), ", slightly ", side, " ", pct(r$ref, 0),
+           " but within the Monte Carlo error of the learned limits (Section 4)")
+  } else {
+    paste0(pct(r$value, d), ", ", side, " ", pct(r$ref, 0))
+  }
+}
+```
 
-| | CCW as published | CCW + QBA adjustment |
-|---|---|---|
-| HR, surgery within 6 months vs not (95% CI) | `r hr(cr$est_obs)` (`r ci(cr$ci_lo_obs, cr$ci_hi_obs)`), p = `r f3(cr$p_obs)` | `r hr(cr$est_corr)` (`r ci(cr$ci_lo_corr, cr$ci_hi_corr)`), calibrated p = `r f3(cr$p_calibrated)` |
-| Bias, log HR (MC 95% interval) | **`r f3(po$bias)`** (`r bias_ci(po)`) | 0 by construction |
-| 95% CI coverage (target 95%) | **`r pct(po$coverage)`** | `r pct(adj("95% CI coverage")$value)` |
-| Type I error (target 5%) | **`r pct(pn$reject_0, 3)`** | `r pct(adj("Type I error")$value, 3)` |
-| Power at the observed effect | `r pct(po$reject_0)` | `r pct(adj("Power")$value)` |
-| Alternative: HR with simulation bootstrap-t 95% CI (Section 4.1) | | `r hr(cr$est_obs)` (`r ci(cr$ci_lo_boot_t, cr$ci_hi_boot_t)`) |
-| Alternative: HR with confidence-belt 95% CI (Section 4.2) | | `r hr(cr$est_obs)` (`r ci(cr$ci_lo_belt, cr$ci_hi_belt)`) |
+The CCW analysis of the Maringe example was replayed `r n0(B)` times on the original `r nrow(bd)` patients with the generating effect calibrated so that the **average** CCW estimate equals the observed one (paper Section 2.7.1), and `r n0(B)` times with no surgery effect. **Bias:** `r if (bias_sig) "small but detectable" else "not detectable"`. **95% CI coverage:** `r if (cov_sig) "below nominal" else "consistent with 95%"`. **Type I error:** `r if (t1_sig) "inflated" else "consistent with 5%"`. After the non-parametric QBA adjustment, checked in an independent set of `r n0(sa("95% CI coverage")$n)` studies per scenario, the bias is `r f3(sa("Bias")$value)`, CI coverage `r judge(sa("95% CI coverage"), B)`, and type I error `r judge(sa("Type I error"), B, 2)`. The nested simulation, which re-estimates the whole adjustment in each of `r ns$n_outer` outer datasets, gives coverage `r judge(na("95% CI coverage"), Inf)` and type I error `r judge(na("Type I error"), Inf, 2)` (Monte Carlo error about 1 percentage point, Section 5).
 
-Monte Carlo SE: about 0.2–0.3 percentage points for coverage and type I error, 0.006 for the bias. Bold cells differ from the target by more than their Monte Carlo error. Adjusted performance is cross-fitted (corrections estimated on one half of the replays, checked on the other).
+| | CCW as published | Simple adjustment | Nested simulation |
+|---|---|---|---|
+| HR, surgery within 6 months vs not (95% CI) | `r hr(adj$est_obs)` (`r ci(adj$ci_lo_obs, adj$ci_hi_obs)`) | `r hr(adj$est_adj)` (`r ci(adj$ci_lo_np, adj$ci_hi_np)`) | `r hr(adj$est_adj)` (`r ci(ns$ci_lo_np, ns$ci_hi_np)`) |
+| p-value | `r f3(adj$p_obs)` | `r f3(adj$p_np)` (simulation-calibrated) | — |
+| Bias, log HR (95% MC interval) | `r vb(cc("Bias"))` | `r vb(sa("Bias"))` | `r vb(na("Bias"))` |
+| 95% CI coverage (target 95%) | `r vp(cc("95% CI coverage"))` | `r vp(sa("95% CI coverage"))` | `r vp(na("95% CI coverage"))` |
+| Type I error (target 5%) | `r vp(cc("Type I error"), 3)` | `r vp(sa("Type I error"), 3)` | `r vp(na("Type I error"), 3)` |
+| RMSE, log HR | `r f3(cc("RMSE")$value)` | `r f3(sa("RMSE")$value)` | `r f3(na("RMSE")$value)` |
 
-- **Bias:** the average estimate is HR `r hr(po$mean_est)` instead of `r hr(po$truth)`, slightly too favourable to surgery (`r pct(abs(po$std_bias), 0)` of one SE).
-- **Coverage:** the CIs cover the truth `r pct(po$coverage)` of the time. The robust SE is `r pct(abs(po$rel_err_modse))` too small, and the misses are lopsided: `r pct(wo$miss_below)` of CIs lie entirely below the true HR, `r pct(wo$miss_above)` above.
-- **Type I error:** with no surgery effect, `r pct(pn$reject_0, 3)` of studies are significant, `r pct(pn$reject_0_lower, 3)` of them in favour of surgery. Even with unlimited data the null CCW HR would be `r hr(truth_table_maringe[scenario == "null", psi_large_sample])`.
-- **Conclusion unchanged:** the observed result was not significant (p = `r f3(cr$p_obs)`) and is less so after adjustment (p = `r f3(cr$p_calibrated)`).
+Estimate (MCSE). Bold: differs from the target by more than 1.96 MCSE. CCW: `r n0(B)` studies per scenario. Simple adjustment: learned from these, checked in `r n0(sa("95% CI coverage")$n)` independent studies per scenario. Nested: `r ns$n_outer` outer datasets × `r ns$n_inner` inner studies, every adjustment step repeated per outer dataset.
 :::
 
-**What changed since the 5 October report:** one dataset only (Maringe, as agreed for the paper); `r n0(B)` instead of 5,000 replays per scenario; the censoring mechanism is addressed explicitly (Section 2.3); performance of the adjusted analysis is now evaluated, not only the adjusted estimate. The two-dataset report is kept in `archive/2026-10-05_two_datasets/`. Results agree with that run within Monte Carlo error.
+**What changed since the 22 October report** (manuscript v0.65, 24 Oct):
+
+- **Calibration** starts at θ = −0.7 (the search stops at once if the mean estimate is already within tolerance); the grace period is exactly 180 days.
+- **Performance measures:** RMSE and MSE = RMSE² are reported everywhere; power is no longer calculated.
+- **Additional analyses** (paper 4.6, Section 6): second endpoint (survival difference at 12 months), generalized-gamma prediction model, hypothetical-trial target for an estimator that is not consistent.
+- **Nested split** (paper Appendix, Section 6.4): inner and outer runs chosen from a pilot study.
+
+**Earlier changes** (manuscript v0.64, 17 Oct):
+
+- **Inverse calibration** (2.7.1): θ\* is now chosen so that the *mean CCW estimate* over simulated studies equals the observed estimate; the adjusted estimate is the true CCW effect at θ\*, ψ(θ\*) = observed − bias(θ\*). Previously θ\* made the *true* CCW effect equal the observed estimate.
+- **Non-parametric adjustments** (2.7.2–2.7.3): CI from the quantiles of the centred Monte Carlo errors; test from the quantiles of the centred no-effect estimates, with separate lower and upper limits. Parametric versions are kept as a secondary check.
+- **Independent check** of the adjusted analysis in a separate set of simulated studies (replaces two-fold cross-fitting).
+- **Nested (double) simulation** (2.7.2), presented next to the simple adjustment.
+- The simulation bootstrap-t and confidence belt are no longer part of the default run (switch on in `config/belt.yml`).
 
 # 1. What was done
-
-The draft paper's steps, applied to the published CCW analysis of Maringe et al. (2020):
 
 | Paper step | What it means here |
 |---|---|
 | 1. Fit the reference model | Run the CCW analysis on the original data (Section 1.1). |
 | 2. Keep baseline data | All covariates **and each patient's actual surgery date** are kept unchanged. |
-| 3. Predict outcomes | New death times from a Weibull model fitted to the data, in which surgery changes the hazard **from the day it takes place**. Surgery happens only if the patient is alive on that date. Censoring is predicted as well (Section 2.3). The surgery effect is calibrated so that the true CCW effect equals the observed estimate. |
-| 4. Repeat | `r n0(B)` replays per scenario; two scenarios: observed effect and no effect (`r n0(nrow(sim_results_maringe))` CCW analyses; `r n_fail` failed). |
+| 3. Predict outcomes | New death times from a Weibull model fitted to the data, in which surgery changes the hazard **from the day it takes place**. Censoring is predicted as well (Section 2.3). |
+| 4. Repeat | `r n0(B)` simulated studies at θ\* and at θ = 0 (`r n0(nrow(sim_results_maringe))` CCW analyses; `r n_fail` failed). |
 | 5. Re-analyse | The same CCW function as on the real data. |
-| 6. Quantify | Bias, CI coverage, type I error and power, each with Monte Carlo SE. |
-| 7. Adjust | Bias-corrected estimate, widened CI, calibrated critical value and p-value; their performance checked by cross-fitting. |
+| 6. Quantify | Bias, RMSE (and MSE = RMSE²), CI coverage and type I error, each with Monte Carlo SE. |
+| 7. Adjust | Inverse calibration and bias correction; non-parametric CI and test; checked in independent studies (Section 4) and by a nested simulation (Section 5). |
 
 ## 1.1 Data and analysis
 
@@ -138,9 +179,9 @@ knitr::kable(tb[, -"indent"], align = "lrrrrr", escape = FALSE)
 | Protocol element | Maringe et al. (2020) |
 |---|---|
 | Time zero | Cancer diagnosis |
-| Strategies | Surgery within 6 months (182.62 days, arm 1) vs no surgery within 6 months (arm 0) |
+| Strategies | Surgery within 6 months (grace period of 180 days, arm 1) vs no surgery within 6 months (arm 0) |
 | Outcome, follow-up | All-cause death; to death or 1 year (365.24 days) |
-| Artificial censoring | Arm 0: on the day of surgery (if within 6 months). Arm 1: at 182.62 days if alive and not operated. Deaths before 6 months without surgery count in both arms. |
+| Artificial censoring | Arm 0: on the day of surgery (if within 6 months). Arm 1: at day 180 if alive and not operated. Deaths before 6 months without surgery count in both arms. |
 | Censoring weights | Arm 0: Cox model for time to surgery, weights updated at each surgery date. Arm 1: logistic model for surgery by 6 months among survivors. Both on age, sex, performance status, stage, deprivation, Charlson index, emergency presentation. |
 | Outcome model | Weighted Cox, strategy only, Efron ties, robust (patient-clustered) SE |
 | Loss to follow-up | None: every survivor is followed to 1 year |
@@ -153,7 +194,7 @@ knitr::include_graphics(fig(targets::tar_read(fig_protocol_maringe, store = stor
 **Covariate balance at 6 months** (as Figure S2 of Maringe et al.). Among clones still at risk at the end of the grace period, the arms differ strongly before weighting; the censoring weights reduce, but do not remove, these differences.
 
 ```{r fig-balance}
-#| fig-cap: "Standardised differences between the surgery and no-surgery arms among clones at risk at day 182.62, before and after censoring weights. Dashed lines: ±10%."
+#| fig-cap: "Standardised differences between the surgery and no-surgery arms among clones at risk at day 180, before and after censoring weights. Dashed lines: ±10%."
 #| out-width: "75%"
 knitr::include_graphics(fig(grep("\\.png$", targets::tar_read(fig_balance_maringe, store = store), value = TRUE)), error = FALSE)
 ```
@@ -167,10 +208,10 @@ lab_b <- c(age_c = "age", sex = "sex", perf0 = "performance status 0", perf1 = "
            perf2 = "performance status 2", stage = "stage", deprivation = "deprivation",
            charlson0 = "Charlson 0", charlson1 = "Charlson 1", charlson2 = "Charlson 2",
            emergency = "emergency presentation")
-over_txt <- paste0(lab_b[over$term], " ", formatC(over$smd, format = "f", digits = 1), "%", collapse = ", ")
+over_txt <- if (nrow(over)) paste0(" (", paste0(lab_b[over$term], " ", formatC(over$smd, format = "f", digits = 1), "%", collapse = ", "), ")") else ""
 ```
 
-Before weighting, `r sum(abs(bu$smd) > 10)` of `r nrow(bu)` covariate terms differ by more than 10% (largest `r formatC(max(abs(bu$smd)), format = "f", digits = 1)`%); after weighting, `r nrow(over)` still do (`r over_txt`). In the registry data of Maringe et al. all weighted differences were within 10%; in this 200-patient example the weight models leave residual imbalance. This is consistent with the no-effect scenario, where the CCW estimate stays below HR = 1 even with unlimited data (Section 2.2).
+Before weighting, `r sum(abs(bu$smd) > 10)` of `r nrow(bu)` covariate terms differ by more than 10% (largest `r formatC(max(abs(bu$smd)), format = "f", digits = 1)`%); after weighting, `r nrow(over)` still do`r over_txt`. In the registry data of Maringe et al. all weighted differences were within 10%; in this 200-patient example the weight models leave residual imbalance, consistent with the CCW estimate staying below HR = 1 with no surgery effect even with unlimited data (Section 2.2).
 
 ## 1.2 Run time
 
@@ -178,30 +219,30 @@ Before weighting, `r sum(abs(bu$smd) > 10)` of `r nrow(bu)` covariate terms diff
 #| tbl-cap: "Computing time of the full pipeline by stage (sum over targets, all workers)."
 mt <- data.table(meta)
 mt[, stage := fcase(
-  grepl("^(calibration_maringe$|calib_rows_[0-9]_maringe_)", name), "Calibration of θ* (paper Step 3)",
+  grepl("^calibration_maringe$", name), "Inverse calibration of θ*",
   grepl("^truth_rows_maringe_", name), "True values ψ(θ*) and ψ(0)",
-  grepl("^sim_results_maringe_", name), "Simulated studies (paper Steps 3–5)",
-  grepl("^belt_truth_rows_maringe_", name), "Confidence belt: true values at the grid nodes",
-  grepl("^belt_sims_[0-9]_maringe_", name), "Confidence belt: simulated studies at the grid nodes",
+  grepl("^sim_results_maringe_", name), "Simulated studies",
+  grepl("^val_results_maringe_", name), "Independent check of the simple adjustment",
+  grepl("^nested_obs_maringe_", name), "Nested simulation, outer datasets at θ*",
+  grepl("^nested_null_maringe_", name), "Nested simulation, outer datasets with no effect",
   default = "Data, model fits, summaries, tables, figures, report"
 )]
-# Large datasets actually computed: calibration evaluations are reused for the truths (CRN)
-n_large_cal <- nrow(cal$evals)
-n_reused <- nrow(merge(cal$evals, data.table(theta = c(cal$theta_star, 0)), by = "theta"))
+n_val <- sa("95% CI coverage")$n
 units <- c(
-  "Calibration of θ* (paper Step 3)" = n_large_cal,
-  "True values ψ(θ*) and ψ(0)" = 2 * cfg$truth$n_rep - n_reused,
-  "Simulated studies (paper Steps 3–5)" = 2 * B,
-  "Confidence belt: true values at the grid nodes" = nrow(belt_plan_maringe) * cfg_belt_truth,
-  "Confidence belt: simulated studies at the grid nodes" =
-    sum(belt_maringe$quantiles[!theta %in% c(cal$theta_star, 0), n])
+  "Inverse calibration of θ*" = cal$n_eval * cal$B,
+  "True values ψ(θ*) and ψ(0)" = 2 * cfg$truth$n_rep,
+  "Simulated studies" = 2 * B,
+  "Independent check of the simple adjustment" = 2 * n_val,
+  "Nested simulation, outer datasets at θ*" = ns$n_outer,
+  "Nested simulation, outer datasets with no effect" = ns$n_null
 )
 unit_lab <- c(
-  "Calibration of θ* (paper Step 3)" = "large datasets of 50,000",
-  "True values ψ(θ*) and ψ(0)" = "large datasets of 50,000",
-  "Simulated studies (paper Steps 3–5)" = "CCW analyses of 200 patients",
-  "Confidence belt: true values at the grid nodes" = "large datasets of 50,000",
-  "Confidence belt: simulated studies at the grid nodes" = "CCW analyses of 200 patients"
+  "Inverse calibration of θ*" = "CCW analyses of 200 patients",
+  "True values ψ(θ*) and ψ(0)" = paste("large datasets of", n0(ceiling(cfg$truth$n_target / nrow(bd)) * nrow(bd))),
+  "Simulated studies" = "CCW analyses of 200 patients",
+  "Independent check of the simple adjustment" = "CCW analyses of 200 patients",
+  "Nested simulation, outer datasets at θ*" = "outer datasets",
+  "Nested simulation, outer datasets with no effect" = "outer datasets"
 )
 rt <- mt[, .(seconds = sum(seconds, na.rm = TRUE)), by = stage]
 rt[, `:=`(n = units[stage], what = unit_lab[stage])]
@@ -219,159 +260,255 @@ knitr::kable(rt[, .(
 ```{r runtime-wall}
 rs <- targets::tar_read(run_settings, store = store)
 # Workers actually used, counted from the timestamps of the simulation branches
-source(file.path(root, "R", "utils.R"), local = TRUE)
 rs$workers <- observed_workers(mt)
-heavy <- mt[grepl("^(calibration|calib_rows_[0-9]|truth_rows|sim_results|belt_truth_rows|belt_sims_[0-9])_maringe", name)]
+heavy <- mt[grepl("^(calibration|truth_rows|sim_results|val_results|nested_obs|nested_null)_maringe", name)]
 # Elapsed time of the simulation stages, from the first start to the last finish
 wall <- as.numeric(difftime(max(heavy$time), min(heavy$time - heavy$seconds), units = "mins"))
 ```
 
-Computing time was `r formatC(tot / 60, format = "f", digits = 1)` minutes; with `r rs$workers` parallel worker`r if (isTRUE(rs$workers > 1)) "s" else ""` (`crew` `r rs$crew`, `r rs$cores` cores available, `r session$platform$version`) the simulation stages took `r formatC(wall, format = "f", digits = 1)` minutes of elapsed time. The `r n0(2 * B / cfg$batch_size)` batches of simulated studies and the large datasets behind the true values run in parallel. The calibration search has `r nrow(cal$path)` steps that follow each other, but the `r cfg$calibration$n_rep` large datasets within a step run in parallel, and its evaluations at θ\* and 0 are reused for the true values (`r formatC(rt[grepl("^Calibration", stage), seconds] / 60, format = "f", digits = 1)` minutes of computing time). One CCW analysis of the 200 patients takes about `r formatC(1000 * rt[grepl("^Simulated", stage), seconds] / (2 * B), format = "f", digits = 0)` ms; the large datasets that define the true value take `r pct(sum(rt[grepl("^(Calibration|True)", stage), seconds]) / tot, 0)` of the computing time. Results do not depend on the number of workers: every replicate draws from its own seed.
+Computing time was `r formatC(tot / 60, format = "f", digits = 1)` minutes; with `r rs$workers` parallel worker`r if (isTRUE(rs$workers > 1)) "s" else ""` (`crew` `r rs$crew`, `r rs$cores` cores available, `r session$platform$version`) the simulation stages took `r formatC(wall, format = "f", digits = 1)` minutes of elapsed time. The inverse calibration is sequential (each step needs the previous one); everything else runs in parallel batches. Each nested outer dataset costs about `r formatC(rt[grepl("outer datasets at", stage, fixed = TRUE), seconds] / ns$n_outer, format = "f", digits = 0)` seconds (refit, calibration with `r ns$n_inner` inner studies per step, its own true value), which is why the nested simulation uses fewer outer datasets than the simple adjustment uses studies. Results do not depend on the number of workers: every replicate draws from its own seed.
 
 # 2. How the simulation works {#methods}
 
 ## 2.1 Simulate patients, not the CCW
 
-CCW is an analysis procedure (cloning, artificial censoring, censoring weights, weighted outcome model), not a model of how outcomes arise, so nothing can be drawn from it directly:
+CCW is an analysis procedure (cloning, artificial censoring, censoring weights, weighted outcome model), not a model of how outcomes arise, so nothing can be drawn from it directly. The outcome-generating model is a patient-level model fitted to the original data: Weibull survival with surgery as a time-varying exposure, h(t) = h₀(t)·exp(γ′X + θ·1{t ≥ surgery date}). Covariates and surgery dates are kept (paper Step 2) and new death times are drawn. Each simulated dataset looks like the original data, and the whole CCW procedure is re-run on it.
 
-- The fitted CCW outcome model describes survival under two *strategies*: every patient appears in both arms, with one hazard ratio from day 0. A real patient has one history, and before surgery both strategies are identical for that patient.
-- The cloned dataset is not data: clones, artificial censoring and weights are produced by the analysis. Redrawing outcomes on the clones with weights held fixed would test only a weighted Cox fit, not CCW.
+## 2.2 True value and inverse calibration
 
-So the outcome-generating model is a patient-level model fitted to the original data: Weibull survival with surgery as a time-varying exposure, h(t) = h₀(t)·exp(γ′X + θ·1{t ≥ surgery date}). Covariates and surgery dates are kept (paper Step 2) and new death times are drawn. Each simulated dataset looks like the original data, and the whole CCW procedure is re-run on it.
+θ is the effect of surgery *once received*, at fixed covariates. The CCW hazard ratio compares *strategies* and differs from θ (grace-period dilution, non-proportional strategy hazards, non-collapsibility). The true value is the probability limit of the CCW analysis in the simulated world, ψ(θ) = plim ψ̂~N~(θ) (paper 2.7.1): the base data are copied to `r n0(ceiling(cfg$truth$n_target / nrow(bd)) * nrow(bd))` patients, outcomes are simulated and the same CCW function is run; this is repeated `r cfg$truth$n_rep` times and averaged.
 
-## 2.2 Why the truth is not θ, and calibration
-
-θ is the effect of surgery *once received*, at fixed covariates. The CCW hazard ratio compares *strategies* and differs from θ because of grace-period dilution (in the surgery arm patients are untreated until their surgery date), non-proportional strategy hazards, and non-collapsibility (the CCW model contains the strategy only). None of these has a closed form, so the truth ψ(θ) is computed numerically: the base data are copied to `r n0(ceiling(cfg$truth$n_target / nrow(bd)) * nrow(bd))` patients, outcomes are simulated and the same CCW function is run; this is repeated `r cfg$truth$n_rep` times and averaged.
-
-θ is then searched until ψ(θ) equals the observed CCW estimate (paper Step 3):
+**Inverse calibration.** θ\* is searched so that the *mean* CCW estimate over simulated studies of the original size, m(θ), equals the observed estimate (secant search, `r n0(cal$B)` simulated studies per step with common random numbers, so m(θ) is smooth in θ):
 
 ```{r tab-calib}
-#| tbl-cap: "Calibration path (secant search, 12 large datasets per step)."
+#| tbl-cap: "Inverse calibration path: mean CCW estimate m(θ) over simulated studies of 200 patients."
 p <- copy(cal$path)
 knitr::kable(p[, .(Step = step, `θ (log HR)` = f3(theta), `Weibull HR exp(θ)` = hr(theta),
-                   `ψ(θ), CCW log HR` = f3(psi), `CCW HR` = hr(psi))], align = "rrrrr")
+                   `m(θ), mean CCW log HR` = f3(mean_est), `Mean CCW HR` = hr(mean_est))], align = "rrrrr")
 ```
 
-Result: θ\* = `r f3(cal$theta_star)` (Weibull HR `r hr(cal$theta_star)`), against the fitted coefficient θ = `r f3(dm$theta_hat)` (HR `r hr(dm$theta_hat)`). With `r cfg$truth$n_rep` large datasets the truth is ψ(θ\*) = `r f3(po$truth)` (HR `r hr(po$truth)`, MCSE `r f3(po$truth_mcse)`), equal to the observed `r f3(obs$estimate)` within Monte Carlo error. The draft's sentence "θ = −0.70, which results in HR~CCW~ = 0.48" should read: θ\* = −0.70 (Weibull HR `r hr(cal$theta_star)`), which results in HR~CCW~ = `r hr(po$truth)`.
+Result: θ\* = `r f3(cal$theta_cal)` (Weibull HR `r hr(cal$theta_cal)`), against the fitted coefficient θ̂ = `r f3(dm$theta_hat)` (HR `r hr(dm$theta_hat)`). Over all `r n0(B)` studies at θ\*, the mean CCW estimate is `r f3(adj$mean_est)` (HR `r hr(adj$mean_est)`; observed `r f3(obs$estimate)`, residual `r f3(adj$calib_resid)`). The true value is ψ(θ\*) = `r f3(adj$truth)` (HR `r hr(adj$truth)`, MCSE `r f3(adj$truth_mcse)`), so the bias at θ\* is `r f3(adj$bias)` (MCSE `r f3(adj$bias_mcse)`) and the adjusted estimate is ψ̂~obs~ − b(θ\*) = `r f3(adj$est_adj)` (HR `r hr(adj$est_adj)`). The residual of the search does not matter: ψ̂~obs~ − b(θ\*) equals ψ(θ\*) plus the residual, the paper's identity to first order.
 
-**No-effect scenario (θ = 0).** Every patient's outcome is then identical under both strategies, so every estimand is exactly null and the truth needs no estimation. The large-sample value ψ(0) = `r f3(truth_table_maringe[scenario == "null", psi_large_sample])` is computed only as a diagnostic: it shows that CCW is off-centre even with unlimited data.
+**No-effect scenario (θ = 0).** Every patient's outcome is then identical under both strategies, so the truth is 0 and no calibration is needed (paper 2.7.3). The large-sample value ψ(0) = `r f3(tn$psi_large_sample)` (HR `r hr(tn$psi_large_sample)`) is a diagnostic: CCW is off-centre even with unlimited data.
 
 ## 2.3 Censoring (paper Section 2.3) {#censoring}
 
-The paper says that for time-to-event data the censoring distribution is also predicted, by switching the event/censoring indicator and modelling censoring dependent on covariates, and that the final times are the minimum of event and censoring times. This includes censoring after treatment start.
+`fit_dgm()` fits a second Weibull model with the event/censoring indicator switched (loss to follow-up is the event), same covariates, surgery as a time-varying term; `simulate_outcomes()` draws censoring times by the same inversion and sets follow-up to min(event, censoring, end of study). In the Maringe data all `r n_surv` survivors are followed to day 365.24, so there is no censoring event to model: the predicted censoring is administrative at one year for every patient (`censoring: none`). Artificial censoring of clones is produced by the CCW analysis itself in every replay.
 
-**How the code does it.** `fit_dgm()` fits a second Weibull model with the indicator switched: loss to follow-up is the event, deaths and the end of follow-up are censored. It uses the same covariates and surgery as a time-varying term, so censoring after treatment start has its own hazard. `simulate_outcomes()` draws a censoring time for each patient by the same inversion as the event time, from its own random numbers, and sets follow-up to min(event, censoring, end of study). This is controlled by `censoring: model` in `config/config.yml` and covered by unit tests.
-
-**Why it changes nothing for Maringe.** In the original data all `r n_surv` survivors are followed to day 365.24: nobody is lost to follow-up. With the indicator switched there are no censoring events, so a censoring model cannot be fitted, and the predicted censoring distribution is the observed one: administrative censoring at one year for every patient. Maringe therefore runs with `censoring: none`, and the simulated data have exactly the original censoring pattern. Artificial censoring of clones is not part of this step: it is produced by the CCW analysis itself in every replay.
-
-**For the paper.** Section 4 should state that the example has administrative censoring only. Two places in the draft disagree with Section 2.3 and could be aligned: the step figure ("keep … censoring times fixed") and Table 1, row "Censoring" ("generated from a separately fitted censoring model"). For Maringe the two descriptions give the same simulated data, because the censoring model reduces to fixed administrative censoring.
-
-# 3. Results
-
-```{r fig-perf}
-#| fig-cap: "Bias, 95% CI coverage, type I error and power of the CCW analysis before and after QBA adjustment. Bars: 95% Monte Carlo interval. Dashed: nominal value. The adjusted bias is zero by construction."
-#| out-width: "100%"
-knitr::include_graphics(fig_png("fig_performance"), error = FALSE)
-```
-
-**Bias.** The average estimate is HR `r hr(po$mean_est)` against a truth of `r hr(po$truth)`: a bias of `r f3(po$bias)` on the log scale (MC 95% interval `r bias_ci(po)`), away from the null, detectable but small (`r pct(abs(po$std_bias), 1)` of one SE).
-
-**Coverage.** The empirical SE is `r f3(po$emp_se)`, the average robust SE `r f3(po$mod_se)` (`r pct(abs(po$rel_err_modse))` too small). Coverage is `r pct(po$coverage)` (MCSE `r pct(po$coverage_mcse)`), `r pct(wn$coverage)` with no effect. The SE shortfall and the bias alone would give about 94%; the rest comes from the lopsided misses: estimates and SEs are positively correlated, so low estimates get CIs that are too narrow. `r pct(wo$miss_below)` of CIs lie entirely below the true HR and `r pct(wo$miss_above)` above (`r pct(wn$miss_below)` and `r pct(wn$miss_above)` with no effect; 2.5% each expected). This is the same asymmetry as the type I error.
-
-**Type I error.** With no surgery effect, `r pct(pn$reject_0, 3)` (MCSE `r pct(pn$reject_0_mcse, 3)`) of studies reject H0: HR = 1 at 5%; `r pct(pn$reject_0_lower, 3)` in favour of surgery and only `r pct(pn$reject_0 - pn$reject_0_lower, 3)` against it. The null estimates are centred at HR `r hr(pn$mean_est)`, of which `r hr(truth_table_maringe[scenario == "null", psi_large_sample])` would remain with unlimited data, most likely because the censoring-weight models do not fully capture how surgery decisions depend on patient characteristics.
-
-**Power** to detect the observed effect is `r pct(po$reject_0)`, consistent with the observed CI that includes 1.
+# 3. Performance of the CCW analysis (paper 2.6)
 
 ```{r fig-dist}
-#| fig-cap: "Left: CCW estimates across replays when the true CCW HR equals the observed estimate. Right: z statistics with no surgery effect, with the nominal (±1.96) and calibrated critical values."
+#| fig-cap: "Simulated CCW estimates at the calibrated generating effect θ* (left; true value and mean of estimates) and with no surgery effect (right; true value and the non-parametric rejection limits of a 5% test)."
 #| out-width: "100%"
 knitr::include_graphics(fig_png("fig_distribution"), error = FALSE)
 ```
 
-# 4. Adjustment of the observed result (paper Step 7)
+**Bias.** At θ\* the average estimate is HR `r hr(po$mean_est)` against a truth of `r hr(po$truth)`: a bias of `r f3(po$bias)` on the log scale (MC 95% interval `r f3(po$bias - 1.96 * po$bias_mcse_total)` to `r f3(po$bias + 1.96 * po$bias_mcse_total)`), `r pct(abs(po$std_bias), 1)` of one empirical SE.
+
+**Coverage.** The empirical SE is `r f3(po$emp_se)`, the average robust SE `r f3(po$mod_se)` (`r pct(abs(po$rel_err_modse))` `r if (po$rel_err_modse < 0) "too small" else "too large"`). Coverage is `r pct(po$coverage)` (MCSE `r pct(po$coverage_mcse)`). The misses are lopsided: `r pct(cc("CI entirely below truth")$value)` of CIs lie entirely below the true HR and `r pct(cc("CI entirely above truth")$value)` above (2.5% each expected), because estimates and SEs are correlated.
+
+**Type I error.** With no surgery effect, `r pct(pn$reject_0, 3)` (MCSE `r pct(pn$reject_0_mcse, 3)`) of studies reject H0: HR = 1 at 5%; `r pct(pn$reject_0_fav, 3)` in favour of surgery. The no-effect estimates are centred at HR `r hr(pn$mean_est)`.
+
+**RMSE.** At θ\*, RMSE = `r f3(cc("RMSE")$value)` (MCSE `r f3(cc("RMSE")$mcse)`) and MSE = RMSE² = `r formatC(cc("MSE")$value, format = "f", digits = 4)` (MCSE `r formatC(cc("MSE")$mcse, format = "f", digits = 4)`); MSE = bias² + empirical SE² up to the Monte Carlo error of the truth.
+
+# 4. Simple adjustment (paper 2.7.1–2.7.3)
 
 ```{r tab-corr}
 #| tbl-cap: "Observed analysis, calibration and QBA adjustment."
 knitr::kable(table_results_maringe$analysis, col.names = c("", "Value"), align = "lr")
 ```
 
-- **Estimate:** observed − bias, the paper's grid search to first order.
-- **CI:** widened by empirical SE / model SE = `r f2(cr$se_inflation)`.
-- **Test:** a 5% test needs |z| > `r f2(cr$z_crit_calibrated)` instead of 1.96; the calibrated p-value is the share of no-effect replays with |z| at least as large as observed.
+- **Estimate** (2.7.1): ψ(θ\*) = ψ̂~obs~ − b(θ\*), with b(θ\*) = m(θ\*) − ψ(θ\*) from the `r n0(B)` studies at θ\*.
+- **CI, non-parametric** (2.7.2, 5a): the studies at θ\* are centred at their mean; the 2.5% and 97.5% quantiles of these errors (`r f3(adj$q_lo)` and `r f3(adj$q_hi)`) are added to the adjusted estimate. Parametric alternative: adjusted estimate ± 1.96 × `r f2(adj$se_inflation)` × robust SE.
+- **Test, non-parametric** (2.7.3, 7): the no-effect estimates are centred at their mean (`r f3(adj$null_mean)`); H0 is rejected if the observed estimate minus that mean falls below the 2.5% or above the 97.5% quantile, i.e. if the CCW HR is below `r hr(adj$null_mean + adj$null_q_lo)` or above `r hr(adj$null_mean + adj$null_q_hi)`. Simulation-calibrated p-value: twice the smaller tail share, `r f3(adj$p_np)` (observed `r f3(adj$p_obs)`). Parametric alternative: centred |z| with critical value `r f2(adj$z_crit_par)`, p = `r f3(adj$p_par)`.
 
-**Does the adjusted analysis work?** Applying the adjustments estimated from half of the replays to the other half: coverage `r pct(adj("95% CI coverage")$value)` (MCSE `r pct(adj("95% CI coverage")$mcse)`), type I error `r pct(adj("Type I error")$value, 3)` (MCSE `r pct(adj("Type I error")$mcse, 3)`). Both are back at their targets. The price is lower power (`r pct(adj("Power")$value)` instead of `r pct(po$reject_0)`), because part of the original power came from the inflated type I error.
+**Does it work?** The adjustment learned from the `r n0(B)` studies above was applied unchanged to `r n0(n_val)` *independent* studies per scenario (own seed stream; paper 2.7.2 step 5c and 2.7.3 step 9). The MCSEs below treat the learned CI and rejection limits as fixed, i.e. they describe the rule as it would be applied to the study. The limits themselves were estimated from `r n0(B)` studies, so the true error rate of any such learned rule varies by about ±`r pct(lim_sd(B), 2)` (SD) around its target. Including this, the simple adjustment deviates from nominal by z = `r f2(z_tot(sa("95% CI coverage"), B))` for coverage and z = `r f2(z_tot(sa("Type I error"), B))` for type I error; more no-effect studies would narrow the latter.
 
 ```{r tab-perf}
-#| tbl-cap: "Performance before and after QBA adjustment (estimate (MCSE))."
+#| tbl-cap: "Performance of the CCW analysis, the simple adjustment (independent studies) and the nested simulation (estimate (MCSE))."
 knitr::kable(table_results_maringe$performance,
-             col.names = c("Performance measure", "CCW as published", "CCW + QBA adjustment"),
-             align = "lrr")
+             col.names = c("Performance measure", "CCW as published", "Simple adjustment", "Nested simulation"),
+             align = "lrrr")
 ```
 
-## 4.1 Alternative CI: simulation bootstrap-t {#boot-t}
-
-The symmetric widening cannot correct the lopsided misses. An asymmetric CI uses the replays directly: the 2.5% and 97.5% quantiles of $T = (\hat\psi - \psi)/\widehat{SE}$ over the replays with true HR = observed are `r f2(cr$t_q_lo)` and `r f2(cr$t_q_hi)` (instead of ±1.96), and the CI is $[\hat\psi - q_{97.5}\widehat{SE},\ \hat\psi - q_{2.5}\widehat{SE}]$. This is a parametric bootstrap-t (Efron & Tibshirani 1993, ch. 12): the model fitted to the data generates the replays, and the observed estimate plays the role of the truth. $T$ already contains the bias, so the CI is built around the unadjusted estimate.
-
-**Observed result:** HR `r hr(cr$est_obs)` (`r ci(cr$ci_lo_boot_t, cr$ci_hi_boot_t)`), against Wald `r ci(cr$ci_lo_obs, cr$ci_hi_obs)`, QBA widening `r ci(cr$ci_lo_corr, cr$ci_hi_corr)` and confidence belt `r ci(cr$ci_lo_belt, cr$ci_hi_belt)` (Section 4.2).
-
-**How to read the checks.** Both learned CIs are checked by cross-fitting (learned on half of the replays, checked on the other half). In the same scenario this is close to circular: the CI was tuned to exactly that distribution. The informative check is *transfer*: learn the CI at one true effect, check it at the other. It shows whether the CI still works when the true effect differs from the one used to build it, which is the situation of a real study.
-
-```{r tab-ci}
-#| tbl-cap: "Coverage of the 95% CIs, % (MCSE), and the share of CIs lying entirely below or above the truth (2.5% each expected). Confidence belt: coverage of the CCW large-sample limit, at no effect ψ(0) rather than 0 (Section 4.2)."
-knitr::kable(table_ci_methods_maringe,
-             col.names = c("CI", "Checked at", "Learned from", "Coverage", "Below truth", "Above truth"),
-             align = "lllrrr")
-```
-
-```{r fig-ci}
-#| fig-cap: "Coverage and one-sided misses of the Wald, QBA-widened, bootstrap-t and confidence-belt CIs. Bars: 95% Monte Carlo interval. Dashed: nominal value."
+```{r fig-perf}
+#| fig-cap: "Bias, RMSE, 95% CI coverage and type I error: CCW as published, simple non-parametric adjustment (independent studies) and nested simulation. Bars: 95% Monte Carlo interval. Dashed: nominal value."
 #| out-width: "100%"
-knitr::include_graphics(fig(grep("fig_ci_methods\\.png$", targets::tar_read(fig_ci_methods_maringe, store = store), value = TRUE)), error = FALSE)
+knitr::include_graphics(fig_png("fig_performance"), error = FALSE)
 ```
 
-- **Transfer (the real check):** bootstrap-t `r pct(cim("Bootstrap-t", "null", "observed")$coverage)` at no effect and `r pct(cim("Bootstrap-t", "observed", "null")$coverage)` at the observed effect; QBA widening `r pct(cim("QBA widening", "null", "observed")$coverage)` and `r pct(cim("QBA widening", "observed", "null")$coverage)`; Wald `r pct(wn$coverage)` and `r pct(wo$coverage)`.
-- **Why not exactly 95%:** $T$ is not fully pivotal. Its quantiles shift with the true effect, so quantiles learned at one effect over-correct at the other (misses flip side in the transfer rows). Section 4.2 removes this assumption.
-- **Validity** rests on the same assumption as the rest of the QBA: the simulated world (Weibull outcome model, fixed covariates and surgery dates) is close enough to the real one.
-
-## 4.2 Nominal CI: confidence belt {#belt}
-
-The bootstrap-t uses the quantiles of $T$ at one true effect. The confidence belt lets them depend on the true value (Neyman construction, test inversion):
-
-1. **Grid of true effects.** Besides θ\* and 0, the study is replayed at `r nrow(belt_maringe$quantiles) - 2` further values of θ, each with its own true value $\psi(\theta)$ (`r cfg_belt_truth` large datasets). The grid points are Chebyshev–Lobatto nodes in ψ over the range where CI endpoints fall (observed CI and the outer 0.5% of replicate Wald endpoints, widened by 10%), mapped to θ through a monotone spline of ψ(θ) through the calibration values, the true values and anchors at θ = ±`r cfg_belt_b$bound / 2` and ±`r cfg_belt_b$bound` (`r cfg_belt_b$anchor_n_rep` large datasets each), and limited to the ψ values reached between the anchors. Each point gets `r n0(cfg_belt_b$B_start)` replays first (same seeds), then more until the Monte Carlo SE of both quantiles of $T$ is below `r cfg_belt_b$target_mcse` (at most `r n0(cfg_belt_b$B_max)`): `r n0(min(belt_maringe$quantiles[!theta %in% c(cal$theta_star, 0), n]))` to `r n0(max(belt_maringe$quantiles[!theta %in% c(cal$theta_star, 0), n]))` replays per point.
-2. **Quantile curves.** At each grid point, the 2.5% and 97.5% quantiles of $T = (\hat\psi - \psi)/\widehat{SE}$; a weighted polynomial in $\psi$ (degree `r belt_maringe$degree`) smooths them across the grid (figure below).
-3. **Inversion.** The CI is every $\psi_0$ with $q_{2.5}(\psi_0) \le (\hat\psi - \psi_0)/\widehat{SE} \le q_{97.5}(\psi_0)$, i.e. every true value that a 5% test calibrated *at that value* would not reject.
-
-**Why nominal:** for any true value, the test calibrated at it rejects 5% of the time, so the set of non-rejected values contains the truth 95% of the time, whatever the true effect, without assuming $T$ is pivotal. What remains is Monte Carlo error in the quantiles, smoothing between grid points, and the adequacy of the simulated world.
-
-```{r fig-belt}
-#| fig-cap: "Quantiles of T across the grid of true effects (points) and the smoothed curves used for inversion. Dashed: ±1.96. Wald assumes flat lines at ±1.96, the bootstrap-t flat lines at the values for the observed effect."
-#| out-width: "70%"
-knitr::include_graphics(fig(grep("fig_belt\\.png$", targets::tar_read(fig_belt_maringe, store = store), value = TRUE)), error = FALSE)
+```{r refl}
+r_np <- P("Simple adjustment", "Non-parametric", "95% CI coverage")
+r_rf <- P("Simple adjustment", "Non-parametric (reflected)", "95% CI coverage")
 ```
 
-**Check.** A CI covers $\psi_0$ exactly when the test at $\psi_0$ does not reject, so with the checked effect on the grid coverage would hold by construction. The check therefore drops that grid point and refits the curves (and cross-fits over replays), so the belt has to interpolate, as it would for an unknown true effect. The MCSEs come from a bootstrap over replays (200 resamples, replays resampled jointly across grid points) and include the Monte Carlo error of the grid quantiles, not only the binomial error of the checked CIs (`r pct(bo$mcse_binomial, 2)`):
+**Form of the non-parametric CI.** The paper adds the error quantiles to the estimate, [ψ̃ + q~2.5~, ψ̃ + q~97.5~]. If the error distribution is skewed, the interval that inverts it exactly is the reflected one, [ψ̃ − q~97.5~, ψ̃ − q~2.5~]. Here the centred errors are `r if (adj$q_hi > -adj$q_lo) "right" else "left"`-skewed (quantiles `r f3(adj$q_lo)` and `r f3(adj$q_hi)`). Overall coverage is `r pct(r_np$value)` for the paper's form and `r pct(r_rf$value)` for the reflected form (MCSE `r pct(r_np$mcse)`). The share of CIs entirely below / above the true value is `r pct(P("Simple adjustment", "Non-parametric", "CI entirely below truth")$value)` / `r pct(P("Simple adjustment", "Non-parametric", "CI entirely above truth")$value)` for the paper's form; the reflected form misses `r pct(P("Simple adjustment", "Non-parametric (reflected)", "CI entirely below truth")$value)` below and `r pct(P("Simple adjustment", "Non-parametric (reflected)", "CI entirely above truth")$value)` above (2.5% each expected):
 
-- **Observed effect:** coverage `r pct(bo$coverage)` (MCSE `r pct(bo$mcse)`); `r pct(bo$miss_below)` of CIs entirely below the truth, `r pct(bo$miss_above)` above.
-- **No effect:** coverage of ψ(0) = `r f3(pn$psi_large_sample)` (HR `r hr(pn$psi_large_sample)`), the CCW large-sample limit when surgery has no effect, `r pct(bn$coverage)` (MCSE `r pct(bn$mcse)`); `r pct(bn$miss_below)` below, `r pct(bn$miss_above)` above. The belt is indexed by the CCW limit at every grid point, so here it targets ψ(0) rather than the convention 0 used for the type I error (Section 2.2); whether a belt CI excludes HR = 1 is therefore not a test of no effect.
-- **Grid range:** `r pct(bo$share_outside, 0)` (observed) and `r pct(bn$share_outside, 0)` (no effect) of replay CIs have an endpoint beyond the grid, where the nearest quantile is used. The grid runs at most from θ = −`r cfg_belt_b$bound` to `r cfg_belt_b$bound`: for strong effects ψ(θ) levels off (deaths before surgery stay in the surgery arm), so no θ in this range gives a CCW HR below HR `r hr(min(belt_maringe$quantiles$psi))`. This affects the far endpoint only, not whether the CI contains the truth.
+```{r tab-ci-variants}
+#| tbl-cap: "Coverage of the CI variants, % (MCSE), and the share of CIs entirely below or above the true value (2.5% each expected)."
+knitr::kable(table_results_maringe$ci_variants,
+             col.names = c("Analysis", "CI", "Coverage", "Below truth", "Above truth"), align = "llrrr")
+```
 
-# 5. Alignment with the draft paper (version 0.62, 8 Oct) {#alignment}
+# 5. Nested simulation (paper 2.7.2) {#nested}
+
+The simple adjustment treats the fitted prediction model, θ\* and the bias correction as known. The nested simulation repeats the whole adjustment in each of `r ns$n_outer` outer datasets, as it would be done for the study data:
+
+1. Outer dataset: simulated at θ\* from the fitted model (baseline data and surgery dates kept); CCW estimate ψ̂~r~. The outer datasets are the first `r ns$n_outer` of the independent studies of Section 4, so both adjustments are compared on the same data.
+2. Refit the Weibull prediction model to the outer dataset.
+3. Inverse calibration with the refitted model: θ~r~ with m~r~(θ~r~) = ψ̂~r~ (Newton step from θ\*, then secant; `r ns$n_inner` inner studies per step, common random numbers; `r f2(ns$mean_eval)` steps on average, `r ns$n_at_bound` at the |θ| bound).
+4. True value ψ~r~(θ~r~) under the refitted model (`r cfg$nested$truth_n_rep` large datasets of `r n0(ceiling(cfg$nested$truth_n_target / nrow(bd)) * nrow(bd))`).
+5. Bias b~r~ = m~r~(θ~r~) − ψ~r~(θ~r~); adjusted estimate ψ̃~r~ = ψ̂~r~ − b~r~; non-parametric CI from the inner studies at θ~r~.
+6. Coverage: share of outer CIs that contain the true value used to generate the outer data, ψ(θ\*) = `r f3(adj$truth)`.
+
+With no effect, each outer dataset gets its own refitted model, `r ns$n_inner` inner no-effect studies and its own rejection limits; type I error is the share of outer datasets in which H0 is rejected.
+
+```{r fig-nested}
+#| fig-cap: "Nested simulation: estimated bias correction b_r (left; black: correction of the simple adjustment) and bias-adjusted estimate (right; black: true value ψ(θ*)) across outer datasets."
+#| out-width: "100%"
+knitr::include_graphics(fig_png("fig_nested"), error = FALSE)
+```
+
+```{r nested-text}
+excess <- sqrt(max(0, ns$bias_r_sd^2 - ns$bias_r_within_mcse^2))
+```
+
+**Results.** `r ns$n_outer_ok` of `r ns$n_outer` outer datasets (and `r ns$n_null_ok` of `r ns$n_null` with no effect) completed. The calibrated θ~r~ varies across outer datasets (mean `r f3(ns$theta_r_mean)`, SD `r f3(ns$theta_r_sd)`), following the outer estimates. The estimated bias correction has mean `r f3(ns$bias_r_mean)` (simple adjustment: `r f3(adj$bias)`) and SD `r f3(ns$bias_r_sd)` across outer datasets, of which `r f3(ns$bias_r_within_mcse)` is the Monte Carlo error within each outer dataset; `r if (excess < 0.0005) 'the genuine variation of the correction is therefore not distinguishable from zero' else paste0('the genuine variation of the correction is therefore about ', f3(excess))`, against an empirical SE of `r f3(po$emp_se)`. The nested CI of the observed analysis is `r ci(ns$ci_lo_np, ns$ci_hi_np)`, against `r ci(adj$ci_lo_np, adj$ci_hi_np)` from the simple adjustment.
+
+- **Coverage** of the outer CIs: `r vp(na("95% CI coverage"))`; on the same outer datasets the simple adjustment's fixed correction covers `r pct(ns$coverage_fixed)`.
+- **Type I error** with refitted limits: `r vp(na("Type I error"), 3)`; fixed limits of the simple adjustment on the same datasets: `r pct(ns$type1_fixed, 3)`.
+- **Nested CI of the observed analysis:** the centred 2.5% and 97.5% quantiles of the outer bias-adjusted estimates (`r f3(ns$q_lo)`, `r f3(ns$q_hi)`) added to the adjusted estimate, so it includes the variation of the estimated bias correction.
+- With `r ns$n_inner` inner studies, each outer CI and rejection limit rests on few tail studies; this noise is part of what the nested coverage and type I error measure. More inner studies (`nested: inner` in `config/config.yml`) bring the nested results closer to those of the procedure as applied to the study data (`r n0(B)` studies).
+
+# 6. Additional analyses (paper 4.6) {#additional}
+
+## 6.1 Survival difference at 12 months
+
+Same data, clones, weights and prediction model; the estimand is the difference between the weighted proportions alive at day 365 (arm 1 − arm 0, IPC-weighted, Hájek form; SE from the patient-clustered influence function with the weights treated as known). Direction: a larger difference favours surgery, so the rejection direction and the "favouring" rates are mirrored relative to the log HR. Calibration starts at θ = −0.7 as well. Differences are in percentage points.
+
+```{r surv12}
+s12 <- adjustment_maringe_surv12
+c12 <- function(m) perf_compare_maringe_surv12[analysis == "CCW" & method == "Wald (robust SE)" & measure == m]
+```
+
+Observed difference `r f2(100 * s12$est_obs)` points; calibrated θ\* = `r f3(calibration_maringe_surv12$theta_cal)` (HR `r hr(calibration_maringe_surv12$theta_cal)`) after `r calibration_maringe_surv12$n_eval` evaluations. Adjusted difference `r f2(100 * s12$est_adj)` points (non-parametric CI `r f2(100 * s12$ci_lo_np)` to `r f2(100 * s12$ci_hi_np)`).
+
+```{r tab-surv12}
+#| tbl-cap: "12-month survival difference: observed analysis and performance (percentage points; MSE in squared points)."
+knitr::kable(table_results_maringe_surv12$performance,
+             col.names = c("Performance measure", "CCW as published", "Simple adjustment", "Nested simulation"),
+             align = "lrrr")
+```
+
+## 6.2 Generalized-gamma prediction model
+
+The Weibull baseline is replaced by a three-parameter generalized gamma (flexsurv parametrisation with μ = 0, free scale σ and shape Q; Weibull at Q = 1), proportional hazards in the covariates and a time-varying surgery effect; outcomes are simulated by inversion. It runs in its own store (`R_CONFIG_ACTIVE=gengamma`, `_targets_gengamma`), so the paper run is untouched.
+
+```{r gengamma}
+gg_store <- file.path(root, "_targets_gengamma")
+has_gg <- tryCatch(
+  dir.exists(gg_store) && "perf_compare_maringe" %in% targets::tar_meta(store = gg_store)$name,
+  error = function(e) FALSE
+)
+```
+
+```{r tab-gengamma, eval = has_gg}
+#| tbl-cap: "Weibull and generalized-gamma prediction model: log HR, simple adjustment (independent studies)."
+pg <- targets::tar_read(perf_compare_maringe, store = gg_store)
+pick <- function(x, lab) x[analysis %in% c("CCW", "Simple adjustment") & method %in% c("Wald (robust SE)", "Non-parametric") &
+                           measure %in% c("Bias", "RMSE", "95% CI coverage", "Type I error"),
+                           .(Model = lab, Analysis = analysis, Measure = measure, Value = value, MCSE = mcse)]
+knitr::kable(rbind(pick(pf, "Weibull"), pick(pg, "Generalized gamma")), digits = 4)
+```
+
+```{r gg-note, eval = !has_gg, results = "asis"}
+cat("*Not run in this report: `_targets_gengamma` does not exist yet.*\n")
+```
+
+## 6.3 Estimator that is not consistent: hypothetical-trial target
+
+If the pipeline's own probability limit is not the target (the CCW estimator censors at the end of the grace period, or, as here, the analysis is deliberately inconsistent), ψ is replaced by the log HR of a hypothetical randomised trial in the simulated world. Assumptions of this implementation (config `rct`): each patient is in both arms; arm 1 gets surgery at the patient's own date if it falls within 180 days, otherwise at a date drawn from the observed in-window dates; arm 0 has no surgery and is censored at day 181; unweighted Cox model. Only the truth changes, so the same replicates and inner runs are reused.
+
+```{r rct}
+rt <- truth_table_rct_maringe
+r_o <- rt[scenario == "observed"]; r_n <- rt[scenario == "null"]
+ra <- adjustment_rct_maringe
+rns <- nested_rct_maringe$summary
+pr <- function(an, meth, m) perf_compare_rct_maringe[analysis == an & method == meth & measure == m]
+```
+
+Target at θ\*: HR `r hr(r_o$truth)` (CCW limit: `r hr(adj$truth)`); at no effect: HR `r hr(r_n$truth)` (CCW limit `r hr(tn$truth)`). Adjusted HR `r hr(ra$est_adj)` (`r ci(ra$ci_lo_np, ra$ci_hi_np)`) with the simple adjustment, `r ci(rns$ci_lo_np, rns$ci_hi_np)` nested. Bias of the observed analysis against this target: `r vb(pr("CCW", "Wald (robust SE)", "Bias"))`; coverage `r vp(pr("CCW", "Wald (robust SE)", "95% CI coverage"))`; after the simple adjustment `r vp(pr("Simple adjustment", "Non-parametric", "95% CI coverage"))`, nested `r vp(pr("Nested adjustment", "Non-parametric", "95% CI coverage"))`.
+
+```{r tab-rct}
+#| tbl-cap: "Performance against the hypothetical-trial target."
+knitr::kable(table_results_rct_maringe$performance,
+             col.names = c("Performance measure", "CCW as published", "Simple adjustment", "Nested simulation"),
+             align = "lrrr")
+```
+
+## 6.4 Outer and inner runs of the nested simulation (paper Appendix) {#allocation}
+
+A pilot of `r allocation_maringe$n_outer_pilot` outer × `r allocation_maringe$R_pilot` inner runs gives the variance decomposition Var~obs~ = V + σ~w~²/R of the bias-adjusted estimates.
+
+```{r alloc}
+al <- allocation_maringe
+```
+
+σ~w~² = `r formatC(al$sigma_w2, format = "e", digits = 2)`, V = `r formatC(al$V, format = "e", digits = 2)`, k = σ~w~²/V = `r f2(al$k)`. Cost of an outer replicate without inner runs c~o~ = `r f2(al$c_o_sec)` s, of one inner run c~i~ = `r formatC(al$c_i_sec, format = "f", digits = 3)` s (directly timed: `r formatC(al$c_study_direct_sec, format = "f", digits = 3)` s), ratio `r f2(al$cost_ratio)`. Optimal R\* = (k/2)(1 + √(1 + 8c~o~/(k c~i~))) = `r f2(al$R_star)` (rounded: `r al$R_variance`); outer runs for a 2% relative MCSE of the empirical SE: B = `r n0(al$B_precision)` (percentile limits: at least `r n0(al$B_rec)`). R\* minimises the variance of V̂ per unit cost, but the limits of each outer CI and test are quantiles of its inner studies, and these are too narrow with few of them (table below); the recommended design therefore uses R = `r al$R_rec` (`nested: inner`). Compute (CPU time, pilot machine): B = `r n0(al$B_rec)` × R = `r al$R_rec` takes `r f2(al$cost_rec_cpu_h)` h, B × R\* `r f2(al$cost_rstar_cpu_h)` h, the former 500 × 250 `r f2(al$cost_current_cpu_h)` h; the relative variance of V̂ is `r f2(al$relvar_current / al$relvar_rec_same_cost)` times larger for 500 × 250 than for the recommended split at equal cost. Shrink factor of the outer deviations √(V/Var~obs~) = `r f3(al$shrink_factor)` (applied only if `nested: shrink: true`).
+
+```{r tab-limits}
+#| tbl-cap: "Width of the centred 2.5%-97.5% limits of one outer dataset's inner studies, by number of inner studies, relative to the largest."
+knitr::kable(pilot_limits_maringe, digits = 3, col.names = c("Inner studies", "Mean width (log HR)", "Relative width"))
+```
+
+```{r tab-anova}
+#| tbl-cap: "V = Var_obs(r) − σ_w²/r with the first r inner runs: it should not depend on r."
+knitr::kable(pilot_anova_maringe, digits = 6, col.names = c("r", "Var_obs", "σ_w²", "V"))
+```
+
+## 6.5 Optional comparison: bootstrap-t and confidence belt {#belt}
+
+```{r belt-section, results = "asis"}
+has_belt <- tryCatch(
+  all(c("belt_maringe", "ci_methods_maringe", "ci_extra_obs_maringe") %in%
+        targets::tar_meta(store = store)$name),
+  error = function(e) FALSE
+)
+if (has_belt) {
+  cat(knitr::knit_child(file.path(root, "reports", "_ci_comparison.qmd"), quiet = TRUE))
+} else {
+  cat("*Not built in this run (`enabled: false` in `config/belt.yml`).*\n")
+}
+```
+
+# 7. Alignment with the draft paper (version 0.65, 24 Oct) {#alignment}
 
 | Draft paper | This run |
 |---|---|
-| Section 2.3: censoring predicted by switching the event/censoring indicator | **Implemented**; for Maringe it reduces to administrative censoring at 1 year (Section 2.3 above). Step figure and Table 1 "Censoring" row to be aligned. |
-| Section 4.2: covariates age, sex, performance status, stage, deprivation, Charlson, emergency | **As used** in both the weight models and the Weibull model. |
-| Section 4.3: "θ = −0.70, which results in HR~CCW~ = 0.48" | θ\* = `r f2(cal$theta_star)` is confirmed; HR~CCW~ = `r hr(po$truth)` (= observed), exp(θ\*) = `r hr(cal$theta_star)`. |
-| Discussion: "small but detectable bias … type I error rate (7.1%) and 95% CI coverage (93.7%)" | Bias confirmed (`r f3(po$bias)`); coverage **`r pct(po$coverage)`**; type I error **`r pct(pn$reject_0, 3)`**, not 7.1%. |
-| Discussion: "QBA-based adjustments successfully restored unbiasedness, the nominal type I error rate, and nominal 95% CI coverage" | **Confirmed** by cross-fitting: coverage `r pct(adj("95% CI coverage")$value)`, type I error `r pct(adj("Type I error")$value, 3)`. |
-| Section 4 placeholder: "Report also running time on how many cores" | `r formatC(wall, format = "f", digits = 1)` minutes elapsed with `r rs$workers` worker`r if (isTRUE(rs$workers > 1)) "s" else ""` (`r formatC(tot / 60, format = "f", digits = 1)` minutes of computing time; Section 1.2). |
-| ISPE 2026 remark (Wang, Zivich et al.): CCW may have low CI coverage | **Supported:** `r pct(po$coverage)`. |
+| 2.7.1: inverse calibration, m(θ\*) = ψ̂~obs~; ψ(θ\*) = plim of the reference analysis; ψ(θ\*) = ψ̂~obs~ − b(θ\*) | **Implemented** (Section 2.2). |
+| 2.7.2: non-parametric CI (add centred quantiles), validation in independent replicates | **Implemented**; reflected form reported alongside (Section 4). |
+| 2.7.2: nested or double simulation | **Implemented** (Section 5); `r ns$n_outer` outer × `r ns$n_inner` inner. |
+| 2.7.3: centred null distribution, separate lower/upper limits, simulation-calibrated p, independent validation, directional rates | **Implemented**; rejection limits HR `r hr(adj$null_mean + adj$null_q_lo)` / `r hr(adj$null_mean + adj$null_q_hi)`, p = `r f3(adj$p_np)`. |
+| 4.2: "The prediction model had 400,000 iterations." | This run: `r n0(B)` studies per scenario (main) + `r n0(n_val)` per scenario (check) + `r n0(cal$n_eval * cal$B)` (calibration); nested `r ns$n_outer` + `r ns$n_null` outer datasets. |
+| 4.3: "Weibull generating HR of 0.49 to reproduce the observed CCW HR of 0.62" | exp(θ\*) = `r hr(cal$theta_cal)`; mean CCW HR at θ\* = `r hr(adj$mean_est)` (observed `r hr(obs$estimate)`). |
+| 4.5 / Table 3: bias −0.015, coverage 93.6%, type I error 7.5% (7.6% in the text) | Bias `r f3(po$bias)`, coverage `r pct(po$coverage)`, type I error `r pct(pn$reject_0, 3)`. |
+| 4.5: adjusted HR 0.6301, CI 0.37–1.08 | Simple: `r hr(adj$est_adj)` (`r ci(adj$ci_lo_np, adj$ci_hi_np)`); nested: `r ci(ns$ci_lo_np, ns$ci_hi_np)`. |
+| Table 2: "Calibrated critical value \|z\| for a 5% test 2.17" | Replaced by non-parametric limits; centred parametric critical value `r f2(adj$z_crit_par)`. |
+| Start of the inverse calibration at θ = −0.7; grace period 180 days | **Implemented** (`calibration: start`, `grace`); θ\* = `r f3(cal$theta_cal)` after `r cal$n_eval` evaluations. |
+| Endpoint: survival at 12 months (binary) | **Implemented** (Section 6.1). |
+| RMSE and RMSE² in all outputs; no power | **Implemented** (Sections 1, 3, 4, A1). |
+| 4.6: generalized-gamma prediction model | **Implemented** (Section 6.2; own store). |
+| 4.6: bias correction for an estimator that is not consistent | **Implemented** (Section 6.3; hypothetical-trial target). |
+| Appendix: optimal outer / inner split from a pilot | **Implemented** (Section 6.4); production `nested: outer` × `inner` = `r cfg$nested$outer` × `r cfg$nested$inner`. |
+| Comment on Figure 3: CI coverage not centred on 95% | Under adjustment: `r pct(sa("95% CI coverage")$value)` (simple), `r pct(na("95% CI coverage")$value)` (nested), with MCSE in Section 4. |
 
-# 6. Caveats and next steps
+# 8. Caveats and next steps
 
-- Truths are simulated (MCSE `r f3(po$truth_mcse)`); this is included in the bias interval.
-- Adjusted bias is zero by construction under two-fold cross-fitting; coverage and type I error of the adjusted analysis are genuine checks.
-- The null offset (ψ(0) ≠ 0) suggests the censoring-weight models are not flexible enough; a sensitivity analysis with splines for age and deprivation in the weight models would test this.
+- **Truth definition.** ψ(θ) is the probability limit of the CCW analysis itself (paper 2.7.1). Any offset CCW keeps with unlimited data (here ψ(0) = `r f3(tn$psi_large_sample)`) is therefore part of the truth at θ\*, not of the bias. Defining ψ instead from pseudo-populations simulated under each strategy (one reading of 2.7.1 step 6c–e) would count that offset as bias.
+- Truths are simulated (MCSE `r f3(adj$truth_mcse)`); this is included in the bias MCSE.
+- The nested results carry the Monte Carlo error of `r ns$n_outer` outer datasets and `r ns$n_inner` inner studies; increase both for the paper run if the precision is not sufficient.
+- **Hypothetical trial (6.3).** The construction of the surgery arm and of the control censoring at day 181 is an implementation assumption; `rct: control_censor_day: null` follows the control arm to the end instead.
+- **Risk difference (6.1).** The SE treats the IPC weights as known, as for the log HR.
 - The Word draft of paper Section 4 (`reports/paper/section4_draft.docx`) uses the same results.
 
 # Appendix
@@ -380,17 +517,16 @@ knitr::include_graphics(fig(grep("fig_belt\\.png$", targets::tar_read(fig_belt_m
 
 ```{r tab-perf-all}
 tab <- performance_maringe[, .(
-  Scenario = c(observed = "Observed effect", null = "No effect")[scenario],
+  Scenario = c(observed = "Calibrated effect θ*", null = "No effect")[scenario],
   `θ (DGM)` = f2(theta), `True HR` = hr(truth), `Mean HR` = hr(mean_est),
   `Bias (log HR)` = f3(bias), MCSE = f3(bias_mcse_total),
   `Emp. SE` = f3(emp_se), `Model SE` = f3(mod_se),
-  Coverage = pct(coverage), `Reject HR = 1` = pct(reject_0, 3),
+  RMSE = f3(rmse), MSE = formatC(mse, format = "f", digits = 4), Coverage = pct(coverage),
+  `Reject HR = 1` = pct(reject_0, 3),
   `Mean deaths` = formatC(mean_outcomes, format = "f", digits = 1), Failed = n_fail
 )]
-knitr::kable(tab, align = "lrrrrrrrrrrr")
+knitr::kable(tab, align = "lrrrrrrrrrrrrr")
 ```
-
-Measures were cross-checked with `rsimsum` (identical bias, empirical SE, coverage and rejection rate).
 
 ## A2. Data-generating mechanism
 
@@ -402,13 +538,9 @@ $$h_i(t) = \lambda \rho\, t^{\rho - 1} \exp\{\gamma^\top X_i + \theta\, I(t \ge 
 
 $$H_i(t) = e^{\eta_i}\left[\min(t, s_i)^{\rho} + e^{\theta}\,\max\{0,\; t^{\rho} - s_i^{\rho}\}\right].$$
 
-Fitted by maximum likelihood, $\ell = \sum_i \left[\delta_i \log h_i(Y_i) - H_i(Y_i)\right]$ (Table A2). In simulation, $\log\lambda$, $\rho$ and $\gamma$ are kept at their fitted values and $\theta$ is set to the scenario value ($\theta^*$ or 0). Where a censoring model is fitted, it has the same form with the indicator switched ($1 - \delta_i$ for loss to follow-up).
-
-**Simulation by inversion** (common random numbers: $U_i$ depends only on the replicate seed, not on $\theta$). With $E_i = -\log U_i$:
+Fitted by maximum likelihood (table below). In simulation, $\log\lambda$, $\rho$ and $\gamma$ are kept at their fitted values and $\theta$ is set to the scenario value ($\theta^*$ or 0); in the nested simulation all of them are refitted to each outer dataset. **Simulation by inversion** (common random numbers: $U_i$ depends only on the replicate seed, not on $\theta$), with $E_i = -\log U_i$:
 
 $$T_i = \begin{cases} \left(E_i\, e^{-\eta_i}\right)^{1/\rho} & \text{if } E_i \le e^{\eta_i} s_i^{\rho} \text{ (death before surgery)},\\[4pt] \left\{ s_i^{\rho} + \left(E_i - e^{\eta_i} s_i^{\rho}\right) e^{-\eta_i - \theta} \right\}^{1/\rho} & \text{otherwise.} \end{cases}$$
-
-**Observed data:** $Y_i = \min(T_i, C_i)$, $\delta_i = I(T_i \le C_i)$; surgery is observed at $s_i$ only if $s_i \le Y_i$.
 
 ```{r tab-dgm}
 #| tbl-cap: "Fitted Weibull model for death (hazard ratios)."
@@ -431,12 +563,10 @@ knitr::include_graphics(fig_png("fig_model_fit"), error = FALSE)
 
 ## A3. Censoring weights and outcome model
 
-Grace period $g = 182.62$ days; $Z$ = age, sex, performance status, stage, deprivation, Charlson index, emergency presentation.
+Grace period $g = 180$ days; $Z$ = age, sex, performance status, stage, deprivation, Charlson index, emergency presentation.
 
-- *Arm 0, no surgery within $g$.* Censored at surgery: $C^a_i = s_i$ if $s_i \le \min(g, Y_i)$. Cox model for time to surgery with Breslow baseline; weights updated at every distinct surgery date:
-$$W_i(t) = \frac{1}{\hat S^c(t \mid Z_i)} = \exp\left\{\hat\Lambda^c_0\big(\min(t, g)\big)\, e^{\hat\beta^\top Z_i}\right\}.$$
-- *Arm 1, surgery within $g$.* Censored at $g$ if alive and not operated. Logistic model among patients alive at $g$, $\pi(Z) = P(s \le g \mid Z, Y > g)$:
-$$W_i(t) = 1 \text{ for } t < g, \qquad W_i(t) = 1/\hat\pi(Z_i) \text{ for } t \ge g.$$
+- *Arm 0, no surgery within $g$.* Censored at surgery: $C^a_i = s_i$ if $s_i \le \min(g, Y_i)$. Cox model for time to surgery with Breslow baseline; weights updated at every distinct surgery date, $W_i(t) = 1/\hat S^c(t \mid Z_i) = \exp\{\hat\Lambda^c_0(\min(t, g))\, e^{\hat\beta^\top Z_i}\}$.
+- *Arm 1, surgery within $g$.* Censored at $g$ if alive and not operated. Logistic model among patients alive at $g$, $\pi(Z) = P(s \le g \mid Z, Y > g)$; $W_i(t) = 1$ for $t < g$ and $1/\hat\pi(Z_i)$ for $t \ge g$.
 - *Outcome model.* Weighted Cox model on the stacked clones, $\lambda(t \mid A) = \lambda_0(t)\, e^{\psi A}$, Efron ties, robust SE clustered on patient, Wald 95% CI.
 
 ```{r code-ccw}
@@ -447,21 +577,22 @@ $$W_i(t) = 1 \text{ for } t < g, \qquad W_i(t) = 1/\hat\pi(Z_i) \text{ for } t \
 #| code: !expr c(fun_src("pipeline.R", "build_clones"), "", fun_src("pipeline.R", "weight_control"), "", fun_src("pipeline.R", "weight_surgery"), "", fun_src("pipeline.R", "fit_outcome"))
 ```
 
-## A4. True value, calibration, performance and adjustment
+## A4. Truth, calibration, adjustment and nested simulation
 
-- **Truth:** $\tilde\psi(\theta) = \frac{1}{R}\sum_{r=1}^{R} \hat\psi^{(r)}_N$, with $N = `r n0(ceiling(cfg$truth$n_target / nrow(bd)) * nrow(bd))`$ and $R = `r cfg$truth$n_rep`$.
-- **Calibration:** $\theta^*$ solves $\tilde\psi(\theta) = \hat\psi_{\text{obs}}$ (secant search from $\hat\theta$ and 0, `r cfg$calibration$n_rep` large datasets per step run in parallel, tolerance `r cfg$calibration$tol`; the same seeds at every θ, so the evaluations at θ\* and 0 are the first `r cfg$calibration$n_rep` of the `r cfg$truth$n_rep` large datasets of the true values).
-- **Performance** over $B = `r n0(B)`$ replicates: bias $= \bar{\hat\psi} - \psi$; coverage $= B^{-1}\sum_b I(|\hat\psi_b - \psi| \le 1.96\,\widehat{SE}_b)$; rejection rate $= B^{-1}\sum_b I(|\hat\psi_b| > 1.96\,\widehat{SE}_b)$. The MCSE of the bias includes the truth's MC error.
-- **Adjustment:** $\hat\psi^{adj} = \hat\psi - \widehat{\text{bias}}$; CI $\hat\psi^{adj} \pm 1.96\, k\, \widehat{SE}$ with $k = \max(1, SE_{emp}/SE_{mod})$; critical value $z^*$ = 95th percentile of $|z|$ under $\theta = 0$. Two-fold cross-fitting over replicate index for the adjusted performance.
-- **Confidence belt:** indexed by the CCW large-sample limit ψ(θ) at every grid point, including ψ(0) at no effect; grid of Chebyshev–Lobatto nodes in ψ (endpoints included, `r cfg_belt_b$n_nodes` nodes, nodes within `r cfg_belt_b$min_gap` of a main-scenario truth dropped); replays per node added in batches until the order-statistic MCSE of both quantiles is below `r cfg_belt_b$target_mcse`; grid quantiles $q_a(\psi_j)$ of $(\hat\psi_b - \psi_j)/\widehat{SE}_b$ (type 8), smoothed by a weighted polynomial in $\psi$ (weights = replays; constant beyond the grid); CI $= \{\psi_0: q_{2.5}(\psi_0) \le (\hat\psi - \psi_0)/\widehat{SE} \le q_{97.5}(\psi_0)\}$ by bisection. Check: leave the checked grid point out, two-fold cross-fitting over replicate index.
-- **Bootstrap-t CI:** $[\hat\psi - q_{97.5}\widehat{SE},\ \hat\psi - q_{2.5}\widehat{SE}]$, $q_a$ = quantile of $(\hat\psi_b - \psi)/\widehat{SE}_b$ over the replicates at $\theta^*$ (type 8). Transfer check: quantiles learned at $\theta^*$ applied at $\theta = 0$ and vice versa.
+- **Truth:** $\psi(\theta) \approx \frac{1}{R}\sum_{r=1}^{R} \hat\psi^{(r)}_N$, $N = `r n0(ceiling(cfg$truth$n_target / nrow(bd)) * nrow(bd))`$, $R = `r cfg$truth$n_rep`$.
+- **Inverse calibration:** $\theta^*$ solves $m(\theta) = \hat\psi_{\text{obs}}$, $m(\theta) = B_c^{-1}\sum_b \hat\psi_b(\theta)$ over $B_c = `r n0(cal$B)`$ studies with common random numbers (secant from $\hat\theta$, tolerance `r cfg$calibration$tol`).
+- **Bias and estimate:** $b(\theta^*) = \bar{\hat\psi}(\theta^*) - \psi(\theta^*)$ over $B = `r n0(B)`$ studies; $\tilde\psi = \hat\psi_{\text{obs}} - b(\theta^*)$; MCSE $= \sqrt{s^2/B + \text{MCSE}(\psi)^2}$.
+- **Non-parametric CI:** $e_b = \hat\psi_b - \bar{\hat\psi}$; $[\tilde\psi + q_{0.025}(e),\ \tilde\psi + q_{0.975}(e)]$ (type-8 quantiles); reflected: $[\tilde\psi - q_{0.975}(e),\ \tilde\psi - q_{0.025}(e)]$. Parametric: $\tilde\psi \pm 1.96\, k\, \widehat{SE}$, $k = SE_{emp}/SE_{mod}$.
+- **Non-parametric test:** $e^0_b = \hat\psi^0_b - \bar{\hat\psi}^0$; reject if $\hat\psi_{\text{obs}} - \bar{\hat\psi}^0 \notin [q_{0.025}(e^0), q_{0.975}(e^0)]$; $p = \min\{1, 2\min(\Pr(e^0 \le d), \Pr(e^0 \ge d))\}$, $d = \hat\psi_{\text{obs}} - \bar{\hat\psi}^0$. Parametric: centred $|z|$, critical value = 95th percentile under $\theta = 0$.
+- **Check:** the adjustment learned above is applied to $`r n0(n_val)`$ independent studies per scenario (separate seed stream).
+- **Nested:** outer $r = 1,\dots,`r ns$n_outer`$: refit, calibrate $\theta_r$ with $`r ns$n_inner`$ inner studies, $b_r = \bar{\hat\psi}^{\text{in}}_r - \psi_r(\theta_r)$, $\tilde\psi_r = \hat\psi_r - b_r$, CI from the inner errors; coverage of $\psi(\theta^*)$. Nested CI of the observed analysis: $\tilde\psi$ plus the centred quantiles of $\tilde\psi_r$.
 
-```{r code-truth}
+```{r code-adjust}
 #| echo: true
 #| eval: false
 #| code-fold: true
-#| code-summary: "R code: truth and calibration (R/truth.R)"
-#| code: !expr c(fun_src("truth.R", "truth_point"), "", fun_src("truth.R", "calib_start"), "", fun_src("truth.R", "calib_next"), "", fun_src("truth.R", "finish_calibration"))
+#| code-summary: "R code: calibration, simple adjustment and nested outer replicate (R/truth.R, R/correction.R, R/nested.R)"
+#| code: !expr c(fun_src("truth.R", "calibrate_mean"), "", fun_src("correction.R", "adjust_simple"), "", fun_src("nested.R", "nested_outer_one"))
 ```
 
 ## A5. Settings and software

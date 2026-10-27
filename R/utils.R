@@ -86,8 +86,8 @@ record_run_settings <- function(sims) {
 observed_workers <- function(meta) {
   # Branches of the simulation patterns (branch-name hashes differ between targets versions)
   is_branch <- if ("type" %in% names(meta)) meta$type == "branch" else TRUE
-  heavy <- paste0("^(sim_results|truth_rows|calib_rows_[0-9]|belt_truth_rows|belt_anchor_rows|",
-                  "belt_sims_[0-9])_")
+  heavy <- paste0("^(sim_results|val_results|truth_rows|nested_obs|nested_null|pilot_nested|",
+                  "belt_truth_rows|belt_anchor_rows|belt_sims_[0-9])_")
   m <- meta[is_branch & grepl(heavy, meta$name), ]
   if (nrow(m) == 0) return(NA_integer_)
   st <- as.numeric(m$time) - m$seconds
@@ -99,4 +99,16 @@ observed_workers <- function(meta) {
   span <- max(en) - min(st)
   lv <- as.integer(names(held))[held >= max(30, 0.05 * span)]
   max(lv[lv > 0], 1L)
+}
+
+#' Stems and the branches of the current patterns only: the store also keeps records of
+#' branches from earlier designs and profiles, which would distort the reported run times
+#' @param meta `tar_meta()` rows with name, type, time, seconds and children.
+#' @return The same rows for stems and current branches, without `children`.
+current_meta <- function(meta) {
+  meta <- as.data.frame(meta)
+  kids <- meta$children[meta$type == "pattern"]
+  kids <- unlist(if (is.list(kids)) kids else strsplit(kids, "*", fixed = TRUE))
+  keep <- meta$type == "stem" | (meta$type == "branch" & meta$name %in% kids)
+  meta[keep, setdiff(names(meta), "children"), drop = FALSE]
 }

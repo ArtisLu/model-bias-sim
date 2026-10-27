@@ -19,21 +19,6 @@ test_that("truth points reuse earlier evaluations and match the serial truth", {
   expect_equal(truth_point(NULL, NULL, 0, 2L, seeds, NULL, NULL, known = fake)$estimate, 7)
 })
 
-test_that("calibration steps converge on a smooth psi(theta)", {
-  psi <- function(th) 0.1 + 0.7 * th + 0.05 * th^2
-  ev <- function(th) data.table(theta = th, seed_id = 1L, estimate = psi(th), n_truth = 1L)
-  cc <- list(tol = 0.005, bound = 3)
-  target <- psi(-0.9)
-  expect_equal(calib_start(list(theta_hat = -1.2)), c(-1.2, 0))
-  expect_equal(calib_start(list(theta_hat = 0.1)), c(0.1, -0.4))
-  rows <- rbind(ev(-1.2), ev(0))
-  for (i in 1:2) rows <- rbind(rows, ev(calib_next(rows, target, cc)))
-  best <- summarise_truth(rows)[which.min(abs(truth - target))]
-  expect_lt(abs(best$truth - target), cc$tol)
-  # Once within tolerance the best evaluated point is returned, so the next stage is free
-  expect_equal(calib_next(rows, target, cc), best$theta)
-})
-
 test_that("psi_to_theta inverts the monotone psi curve and stops at the range ends", {
   pts <- data.table(theta = c(-4, -1, 0, 1, 4), psi = c(-1.4, -0.8, 0, 0.8, 1.6))
   f <- psi_curve(pts)

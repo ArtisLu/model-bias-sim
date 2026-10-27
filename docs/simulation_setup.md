@@ -34,7 +34,7 @@
 | Data handling | **data.table** | For replicate-level tables; native pipe `\|>` elsewhere |
 | Survival / CCW | **survival**, **flexsurv** (or **rstpm2**), **WeightIt**; CCW per chosen dataset tutorial (e.g. **ccwr**) | Pipeline packages are fixed by the protocol |
 | Missing data (if used) | **mice** | Seed passed explicitly |
-| Performance measures | **rsimsum** | Bias, empSE, modSE, coverage, power, all with MCSE |
+| Performance measures | **rsimsum** | Bias, empSE, modSE, coverage, MSE/RMSE, type I error, all with MCSE |
 | Seeds | **withr** (`with_seed()`), L'Ecuyer-CMRG RNG | See Section 5 |
 | Configuration | **config** (YAML) | All tunables in `config/config.yml`; no magic numbers in functions |
 | Argument checks | **checkmate** | Assert inputs at the top of each exported function |
@@ -233,7 +233,7 @@ safely_run <- function(fun, ...) {
 ## 7. Monte Carlo precision and performance
 
 - **Choose B** from a pilot: B ≈ (empirical SD / target MCSE)². For coverage, MCSE = √(p(1 − p)/B); a 0.5% MCSE at p = 0.95 needs ≈ 1,900 replicates. Record the targets and the resulting B in the protocol.
-- **Measures per grid point:** bias ± MCSE, standardised bias (bias / empSE), empirical SE, model SE and its relative error, RMSE, coverage, rejection rate (type I error at θ = 0, power elsewhere), failure rate.
+- **Measures per grid point:** bias ± MCSE, standardised bias (bias / empSE), empirical SE, model SE and its relative error, RMSE and MSE, coverage, type I error at θ = 0 (power is not calculated), failure rate.
 - Use `rsimsum::simsum()` on the stored replicate table; truth is joined by θ from the `truth` target.
 - **Relevance thresholds** for bias (on the log scale) are pre-specified. With large B, p-values for bias are not used.
 - Report bias on the log scale; exp(bias) − 1 is the relative bias on the ratio scale. Never as % of log-HR.

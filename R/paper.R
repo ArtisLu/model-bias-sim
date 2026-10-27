@@ -1,4 +1,4 @@
-# Publication outputs for the SynPUF case study (paper Section 4): baseline table in the
+# Publication outputs for the case study (paper Section 4): baseline table in the
 # style of the Maringe Table S2, results tables, performance after QBA adjustment, figures
 # in the style of the earlier simulation papers (grey strips, framed panels, MCSE bars).
 
@@ -102,7 +102,7 @@ make_baseline_table <- function(raw, ds, spec) {
   tb
 }
 
-#' Weibull outcome and censoring model parameters (supplementary table)
+#' Outcome and censoring model parameters (supplementary table; Weibull or generalized gamma)
 #' @param dgm Fitted DGM with `cens` element; @param spec Dataset config (outcome label).
 #' @return data.table: model, term, hr, ci (text), n_events.
 make_dgm_table <- function(dgm, spec) {
@@ -126,8 +126,17 @@ make_dgm_table <- function(dgm, spec) {
     lb <- ifelse(terms %in% names(lab), lab[terms], terms)
     f2 <- function(x) formatC(x, format = "f", digits = 2)
     f4 <- function(x) formatC(x, format = "f", digits = 4)
+    shape <- if (identical(m$family, "gengamma")) {
+      data.table::data.table(
+        model = model, term = c("Generalized gamma scale (sigma)", "Generalized gamma shape (Q)"),
+        hr = c(f2(m$sigma), f2(m$Q)),
+        ci = c("", paste0(f2(m$Q - 1.96 * m$se[["Q"]]), " to ", f2(m$Q + 1.96 * m$se[["Q"]])))
+      )
+    } else {
+      data.table::data.table(model = model, term = "Weibull shape (rho)", hr = f2(m$rho), ci = "")
+    }
     rbind(
-      data.table::data.table(model = model, term = "Weibull shape (rho)", hr = f2(m$rho), ci = ""),
+      shape,
       data.table::data.table(
         model = model, term = unname(lb), hr = f4(exp(b)),
         ci = paste0(f4(exp(b - 1.96 * se)), " to ", f4(exp(b + 1.96 * se)))
@@ -137,53 +146,6 @@ make_dgm_table <- function(dgm, spec) {
   out <- one(dgm, paste0("Outcome: ", tolower(spec$outcome_label)))
   if (identical(dgm$cens$model, "weibull")) out <- rbind(out, one(dgm$cens, "Censoring: loss to follow-up"))
   out
-}
-
-#' Performance of the published CCW analysis and of the QBA-adjusted analysis
-#' @param sim_results Replicates (one dataset, both scenarios).
-#' @param truth_table From `make_truth_table()`; @param level Nominal level.
-#' @return data.table: analysis, scenario, measure, value, mcse, ref.
-evaluate_adjustment <- function(sim_results, truth_table, level = 0.95) {
-  z <- stats::qnorm(1 - (1 - level) / 2)
-  d <- merge(sim_results[!is.na(estimate)], truth_table[, .(dataset, theta, scenario, truth)],
-             by = c("dataset", "theta"))
-  d[, fold := rep %% 2L]
-  # Two-fold cross-fitting: corrections learned on the other half of the replicates, so the
-  # adjusted procedure is not judged on the replicates that defined it
-  corr <- data.table::rbindlist(lapply(0:1, function(k) {
-    o <- d[fold != k & scenario == "observed"]
-    n0 <- d[fold != k & scenario == "null"]
-    data.table::data.table(
-      fold = k, bias = mean(o$estimate - o$truth),
-      infl = max(1, stats::sd(o$estimate) / sqrt(mean(o$se^2))),
-      z_crit = stats::quantile(abs(n0$estimate / n0$se), level, names = FALSE)
-    )
-  }))
-  d <- merge(d, corr, by = "fold")
-  # The adjusted procedure is the same whatever the true effect, so it is applied in both scenarios
-  d[, `:=`(est_adj = estimate - bias, se_adj = infl * se)]
-  p_row <- function(analysis, scenario, measure, x, ref) {
-    n <- length(x)
-    m <- mean(x)
-    mc <- if (all(x %in% 0:1)) sqrt(m * (1 - m) / n) else stats::sd(x) / sqrt(n)
-    data.table::data.table(analysis = analysis, scenario = scenario, measure = measure,
-                           value = m, mcse = mc, ref = ref, n = n)
-  }
-  o <- d[scenario == "observed"]
-  n0 <- d[scenario == "null"]
-  rbind(
-    p_row("CCW", "observed", "Bias (log HR)", o$estimate - o$truth, 0),
-    p_row("CCW", "observed", "95% CI coverage", as.integer(abs(o$estimate - o$truth) <= z * o$se), level),
-    p_row("CCW", "null", "Type I error", as.integer(abs(n0$estimate / n0$se) > z), 1 - level),
-    p_row("CCW", "observed", "Power", as.integer(abs(o$estimate / o$se) > z), NA_real_),
-    p_row("CCW + QBA adjustment", "observed", "Bias (log HR)", o$est_adj - o$truth, 0),
-    p_row("CCW + QBA adjustment", "observed", "95% CI coverage",
-          as.integer(abs(o$est_adj - o$truth) <= z * o$se_adj), level),
-    p_row("CCW + QBA adjustment", "null", "Type I error",
-          as.integer(abs(n0$estimate / n0$se) > n0$z_crit), 1 - level),
-    p_row("CCW + QBA adjustment", "observed", "Power",
-          as.integer(abs(o$estimate / o$se) > o$z_crit), NA_real_)
-  )
 }
 
 #' Coverage of 95% CIs: Wald (robust SE), QBA widening, bootstrap-t and (optional) confidence belt
@@ -317,79 +279,168 @@ save_ci_figure <- function(ci, dir) {
   c(png, eps)
 }
 
-#' Observed analysis, reference model, calibration and performance in one list of tables
-#' @param obs Observed pipeline result; @param dgm Fitted DGM; @param cal Calibration.
-#' @param truth_table,performance,correction,perf_adj Pipeline targets for one dataset.
+#' Display scale of an endpoint: log HR is shown as HR; a survival difference in percentage points
+#' @param spec Dataset config. @return list(hr, k, unit, est, ci) with formatters.
+display_scale <- function(spec) {
+  ep <- endpoint_info(spec$pipeline)
+  f <- function(x, d) formatC(x, format = "f", digits = d)
+  if (ep$endpoint == "hr") {
+    list(
+      hr = TRUE, k = 1, unit = "log HR", name = "HR",
+      est = function(e) f(exp(e), 4),
+      ci = function(e, lo, hi) paste0(f(exp(e), 4), " (", f(exp(lo), 4), " to ", f(exp(hi), 4), ")")
+    )
+  } else {
+    list(
+      hr = FALSE, k = 100, unit = "percentage points", name = "survival difference",
+      est = function(e) f(100 * e, 2),
+      ci = function(e, lo, hi) paste0(f(100 * e, 2), " (", f(100 * lo, 2), " to ", f(100 * hi, 2), ")")
+    )
+  }
+}
+
+#' Observed analysis, calibration, adjustments and performance in one list of tables
+#' @param obs Observed pipeline result; @param dgm Fitted DGM.
+#' @param cal From `calibrate_observed()`.
+#' @param truth_table,performance,adj,perf,nested Pipeline targets for one dataset
+#'   (`perf` from `compare_performance()`, `nested` from `summarise_nested()`).
 #' @param spec Dataset config (`arm1` names the strategy coded 1).
-#' @return list(analysis = data.table, performance = data.table, dgm = data.table).
-make_results_table <- function(obs, dgm, cal, truth_table, performance, correction, perf_adj, spec) {
+#' @return list(analysis, performance, ci_variants, dgm), each a data.table. Estimates, biases, SEs
+#'   and RMSE are shown on the display scale of the endpoint (HR, or percentage points for the
+#'   survival difference); MSE = RMSE^2 in the squared unit of the log HR or of percentage points.
+make_results_table <- function(obs, dgm, cal, truth_table, performance, adj, perf, nested, spec) {
+  ds <- display_scale(spec)
   f2 <- function(x) formatC(x, format = "f", digits = 2)
   f3 <- function(x) formatC(x, format = "f", digits = 3)
   f4 <- function(x) formatC(x, format = "f", digits = 4)
   pc <- function(x, d = 1) formatC(100 * x, format = "f", digits = d)
-  # HRs and their CIs with 4 decimals, type I error with 3 (percent)
-  hr_ci <- function(e, lo, hi) paste0(f4(exp(e)), " (", f4(exp(lo)), " to ", f4(exp(hi)), ")")
+  # Log-scale quantities (log HR) keep their natural scale; survival differences are in points
+  sc <- function(x, d = 3) formatC(ds$k * x, format = "f", digits = d)
+  est_mc <- function(v, mc) paste0(sc(v), " (", sc(mc), ")")
   po <- performance[scenario == "observed"]
   pn <- performance[scenario == "null"]
   tn <- truth_table[scenario == "null"]
-  cr <- correction
+  ns <- nested$summary
+  nm <- ds$name
+  lim <- function(e) if (ds$hr) f4(exp(e)) else f2(100 * e)
   analysis <- data.table::data.table(
     item = c(
-      "Observed CCW HR (95% CI)", "Observed p-value",
-      "Weibull outcome model: on-treatment HR (exp(theta-hat))",
-      "Calibrated generating HR, exp(theta*)",
-      "True CCW HR in the simulated world, exp(psi(theta*)) (MCSE of psi)",
-      "Large-sample CCW HR with no treatment effect, exp(psi(0))",
-      "QBA-adjusted HR (95% CI)", "CI inflation factor (empirical / model SE)",
-      "Observed HR with simulation bootstrap-t 95% CI",
-      "Calibrated critical value |z| for a 5% test", "Simulation-calibrated p-value"
+      paste0("Observed CCW ", nm, " (95% CI)"), "Observed p-value",
+      "Prediction model: on-treatment HR (exp(theta-hat))",
+      "Calibrated generating HR, exp(theta*), with mean CCW estimate = observed",
+      paste0("Mean CCW estimate at theta* over the simulated studies (MCSE, ", ds$unit, ")"),
+      paste0("True CCW value at theta*, psi(theta*) (MCSE of psi, ", ds$unit, ")"),
+      paste0("Bias at theta*, ", ds$unit, " (MCSE)"),
+      paste0("Large-sample CCW value with no treatment effect, psi(0)"),
+      paste0("QBA-adjusted ", nm, ", simple adjustment (non-parametric 95% CI)"),
+      paste0("QBA-adjusted ", nm, ", nested simulation (non-parametric 95% CI)"),
+      paste0("QBA-adjusted ", nm, ", parametric 95% CI (CI inflation factor)"),
+      paste0("Non-parametric 5% test: H0 rejected if CCW estimate is below / above"),
+      "Simulation-calibrated p-value (non-parametric)",
+      "Nested: SD of the estimated bias correction across outer datasets (within MC error)"
     ),
     value = c(
-      hr_ci(obs$estimate, obs$ci_lo, obs$ci_hi),
+      ds$ci(obs$estimate, obs$ci_lo, obs$ci_hi),
       formatC(obs$p_value, format = "f", digits = 3),
-      f4(exp(dgm$theta_hat)), f4(exp(cal$theta_star)),
-      paste0(f4(exp(po$truth)), " (", f3(po$truth_mcse), ")"),
-      f4(exp(tn$psi_large_sample)),
-      hr_ci(cr$est_corr, cr$ci_lo_corr, cr$ci_hi_corr),
-      f2(cr$se_inflation),
-      hr_ci(obs$estimate, cr$ci_lo_boot_t, cr$ci_hi_boot_t),
-      f2(cr$z_crit_calibrated),
-      formatC(cr$p_calibrated, format = "f", digits = 3)
+      f4(exp(dgm$theta_hat)), f4(exp(cal$theta_cal)),
+      paste0(lim(adj$mean_est), " (", f3(ds$k * adj$mean_est_mcse), ")"),
+      paste0(lim(adj$truth), " (", f3(ds$k * adj$truth_mcse), ")"),
+      est_mc(adj$bias, adj$bias_mcse),
+      lim(tn$psi_large_sample),
+      ds$ci(adj$est_adj, adj$ci_lo_np, adj$ci_hi_np),
+      ds$ci(adj$est_adj, ns$ci_lo_np, ns$ci_hi_np),
+      paste0(ds$ci(adj$est_adj, adj$ci_lo_par, adj$ci_hi_par), "; k = ", f2(adj$se_inflation)),
+      paste0(lim(adj$null_mean + adj$null_q_lo), " / ", lim(adj$null_mean + adj$null_q_hi)),
+      formatC(adj$p_np, format = "f", digits = 3),
+      paste0(sc(ns$bias_r_sd), " (", sc(ns$bias_r_within_mcse), ")")
     )
   )
-  # Unadjusted CCW performance with full MCSE (incl. truth MC error) plus cross-fitted adjusted
-  pa <- perf_adj[analysis == "CCW + QBA adjustment"]
-  getp <- function(m) pa[measure == m]
-  fmt <- function(v, mc, pct, d = 1) {
-    if (pct) paste0(pc(v, d), " (", pc(mc, d), ")") else paste0(f3(v), " (", f3(mc), ")")
+  cols <- list(
+    ccw = c("CCW", "Wald (robust SE)"),
+    simple = c("Simple adjustment", "Non-parametric"),
+    nested = c("Nested adjustment", "Non-parametric")
+  )
+  get <- function(col, m) {
+    r <- perf[analysis == cols[[col]][1] & method == cols[[col]][2] & measure == m]
+    if (nrow(r) == 0) NULL else r
   }
-  performance_tab <- data.table::data.table(
-    measure = c(
-      "Mean estimate, log HR (true value)", "Bias, log HR", "Relative bias, % of empirical SE",
-      "Empirical SE", "Model-based (robust) SE", "Relative error in model SE, %", "RMSE",
-      "95% CI coverage, %", "Power, % (true HR = observed)", "Type I error, % (no effect)",
-      paste0("Rejections favouring ", spec$arm1, ", % (no effect)"), "Failed replicates, n"
-    ),
-    ccw = c(
-      paste0(f3(po$mean_est), " (", f3(po$truth), ")"),
-      fmt(po$bias, po$bias_mcse_total, FALSE),
-      pc(po$std_bias),
-      fmt(po$emp_se, po$emp_se_mcse, FALSE), f3(po$mod_se), pc(po$rel_err_modse), f3(po$rmse),
-      fmt(po$coverage, po$coverage_mcse, TRUE),
-      fmt(po$reject_0, po$reject_0_mcse, TRUE),
-      fmt(pn$reject_0, pn$reject_0_mcse, TRUE, 3),
-      pc(pn$reject_0_lower, 3),
-      format(po$n_fail + pn$n_fail)
-    ),
-    adjusted = c(
-      # With two equal folds the cross-fitted bias correction averages to exactly zero
-      "", "0 (by construction)", "", "", "", "", "",
-      fmt(getp("95% CI coverage")$value, getp("95% CI coverage")$mcse, TRUE),
-      fmt(getp("Power")$value, getp("Power")$mcse, TRUE),
-      fmt(getp("Type I error")$value, getp("Type I error")$mcse, TRUE, 3), "", ""
-    )
+  cell <- function(m, pct, d = 1) {
+    vapply(names(cols), function(col) {
+      r <- get(col, m)
+      if (is.null(r)) return("")
+      if (pct) paste0(pc(r$value, d), " (", pc(r$mcse, d), ")") else est_mc(r$value, r$mcse)
+    }, character(1))
+  }
+  plain <- function(fun) vapply(names(cols), function(col) fun(col), character(1))
+  rel_bias <- plain(function(col) {
+    pc(get(col, "Bias")$value / get(col, "Empirical SE")$value)
+  })
+  misses <- plain(function(col) {
+    paste0(pc(get(col, "CI entirely below truth")$value), " / ",
+           pc(get(col, "CI entirely above truth")$value))
+  })
+  favour <- plain(function(col) {
+    r <- get(col, "Rejections favouring arm 1")
+    if (is.null(r)) "" else pc(r$value, 3)
+  })
+  # RMSE and MSE with MCSE on the display scale (MSE scales with k^2)
+  rmse_mc <- plain(function(col) {
+    r <- get(col, "RMSE")
+    paste0(sc(r$value), " (", sc(r$mcse), ")")
+  })
+  mse_mc <- plain(function(col) {
+    r <- get(col, "MSE")
+    paste0(formatC(ds$k^2 * r$value, format = "f", digits = if (ds$hr) 4 else 2), " (",
+           formatC(ds$k^2 * r$mcse, format = "f", digits = if (ds$hr) 4 else 2), ")")
+  })
+  n_sims <- c(
+    ccw = paste0(format(po$B, big.mark = ","), " per scenario (", po$n_fail + pn$n_fail,
+                 " failed)"),
+    simple = paste0(format(get("simple", "95% CI coverage")$n, big.mark = ","), " per scenario"),
+    nested = paste0(ns$n_outer, " outer x ", ns$n_inner, " inner (", ns$n_fail + ns$n_null_fail,
+                    " failed)")
   )
-  list(analysis = analysis, performance = performance_tab, dgm = make_dgm_table(dgm, spec))
+  rows <- list(
+    c(paste0("Mean estimate, ", ds$unit, " (true value)"),
+      plain(function(col) {
+        r <- get(col, "Mean estimate")
+        paste0(sc(r$value), " (", sc(r$ref), ")")
+      })),
+    c(paste0("Bias, ", ds$unit, " (MCSE)"), cell("Bias", FALSE)),
+    c("Relative bias, % of empirical SE", rel_bias),
+    c("Empirical SE (MCSE)", cell("Empirical SE", FALSE)),
+    c("Model-based (robust) SE", sc(po$mod_se, 3), "", ""),
+    c("Relative error in model SE, %", pc(po$rel_err_modse), "", ""),
+    c("RMSE (MCSE)", rmse_mc),
+    c(paste0("MSE = RMSE^2 (MCSE), ", ds$unit, "^2"), mse_mc),
+    c("95% CI coverage, % (MCSE)", cell("95% CI coverage", TRUE)),
+    c("CI entirely below / above the true value, %", misses),
+    c("Type I error, % (no effect)", cell("Type I error", TRUE, 3)),
+    c(paste0("Rejections favouring ", spec$arm1, ", % (no effect)"), favour),
+    c("Simulated studies", n_sims)
+  )
+  performance_tab <- data.table::as.data.table(do.call(rbind, rows))
+  data.table::setnames(performance_tab, c("measure", "ccw", "simple", "nested"))
+  list(analysis = analysis, performance = performance_tab,
+       ci_variants = make_ci_variant_table(perf), dgm = make_dgm_table(dgm, spec))
+}
+
+#' Coverage of the CI variants (non-parametric as in the paper, reflected, parametric, Wald)
+#' @param perf From `compare_performance()`.
+#' @return data.table: analysis, method, coverage (MCSE), below, above (%).
+make_ci_variant_table <- function(perf) {
+  pc <- function(x, d = 1) formatC(100 * x, format = "f", digits = d)
+  w <- data.table::dcast(perf[grepl("CI", measure)], analysis + method ~ measure,
+                         value.var = c("value", "mcse"))
+  ord <- c("Wald (robust SE)", "Wald (robust SE), validation set", "Non-parametric",
+           "Non-parametric (reflected)", "Parametric")
+  an <- c("CCW", "Simple adjustment", "Nested adjustment")
+  w <- w[order(match(analysis, an), match(method, ord))]
+  w[, .(
+    analysis, method,
+    coverage = paste0(pc(`value_95% CI coverage`), " (", pc(`mcse_95% CI coverage`), ")"),
+    below = pc(`value_CI entirely below truth`), above = pc(`value_CI entirely above truth`)
+  )]
 }
 
 #' Theme of the earlier simulation papers: framed panels, grey strips, legend on the right
@@ -408,14 +459,23 @@ theme_paper <- function(base_size = 13) {
     )
 }
 
-paper_cols <- c("CCW" = "black", "CCW + QBA adjustment" = "red")
+paper_cols <- c("CCW" = "black", "Simple adjustment" = "red", "Nested adjustment" = "#1f6fb4")
 
-#' Figure: performance of CCW before and after QBA adjustment (points +- 1.96 MCSE)
-#' @param perf_adj From `evaluate_adjustment()`.
-#' @return ggplot.
-plot_paper_performance <- function(perf_adj) {
-  d <- data.table::copy(perf_adj)
-  d[, measure := factor(measure, levels = c("Bias (log HR)", "95% CI coverage", "Type I error", "Power"))]
+#' Rows of the three analyses compared in the paper (CCW, simple and nested non-parametric)
+#' @param perf From `compare_performance()`.
+#' @return Subset of `perf`.
+main_analyses <- function(perf) {
+  perf[(analysis == "CCW" & method == "Wald (robust SE)") |
+         (analysis %in% c("Simple adjustment", "Nested adjustment") & method == "Non-parametric")]
+}
+
+#' Figure: bias, RMSE, MSE, coverage and type I error of CCW, simple and nested adjustment
+#' @param perf From `compare_performance()`.
+#' @return ggplot (points +- 1.96 MCSE).
+plot_paper_performance <- function(perf) {
+  ms <- c("Bias", "RMSE", "MSE", "95% CI coverage", "Type I error")
+  d <- main_analyses(perf)[measure %in% ms]
+  d[, measure := factor(measure, levels = ms)]
   d[, analysis := factor(analysis, levels = names(paper_cols))]
   refs <- unique(d[!is.na(ref), .(measure, ref)])
   ggplot2::ggplot(d, ggplot2::aes(analysis, value, colour = analysis)) +
@@ -425,72 +485,111 @@ plot_paper_performance <- function(perf_adj) {
     ggplot2::geom_point(size = 3) +
     ggplot2::facet_wrap(~measure, nrow = 1, scales = "free_y") +
     ggplot2::scale_colour_manual(values = paper_cols, name = "Method:") +
-    ggplot2::scale_x_discrete(labels = c("CCW", "CCW +\nadjustment")) +
+    ggplot2::scale_x_discrete(labels = function(x) sub(" adjustment", "", x), drop = FALSE) +
     ggplot2::labs(x = NULL, y = "Estimate with 95% Monte Carlo interval") +
     theme_paper()
 }
 
-#' Figure: distribution of simulated estimates (true HR = observed) and of null z statistics
-#' @param sim_results Replicates; @param performance Performance table (one dataset).
-#' @param z_crit Calibrated critical value (from the correction step).
+#' Figure: simulated estimates at theta* and with no effect, with true values and test limits
+#' @param sim_results Replicates; @param adj From `adjust_simple()`.
 #' @return ggplot.
-plot_paper_distribution <- function(sim_results, performance, z_crit) {
-  po <- performance[scenario == "observed"]
-  a <- sim_results[theta == po$theta & !is.na(estimate), .(x = estimate, panel = "True HR = observed estimate")]
-  b <- sim_results[theta == 0 & !is.na(estimate), .(x = estimate / se, panel = "No treatment effect")]
-  d <- rbind(a, b)
-  d[, panel := factor(panel, levels = c("True HR = observed estimate", "No treatment effect"))]
-  lines <- rbind(
-    data.table::data.table(panel = "True HR = observed estimate", x = c(po$truth, po$mean_est),
-                           what = c("True value", "Mean of estimates")),
-    data.table::data.table(panel = "No treatment effect", x = c(-1.96, 1.96, -z_crit, z_crit),
-                           what = rep(c("Nominal critical value", "Calibrated critical value"), each = 2))
+plot_paper_distribution <- function(sim_results, adj, xlab = "Estimated log HR") {
+  # Unicode escape keeps the source ASCII; the theta panel is the calibrated scenario
+  p1 <- "Generating effect \u03b8*"
+  p2 <- "No treatment effect"
+  d <- rbind(
+    sim_results[theta == adj$theta_cal & !is.na(estimate), .(x = estimate, panel = p1)],
+    sim_results[theta == 0 & !is.na(estimate), .(x = estimate, panel = p2)]
+  )
+  d[, panel := factor(panel, levels = c(p1, p2))]
+  lines <- data.table::data.table(
+    panel = c(p1, p1, p2, p2, p2),
+    x = c(adj$truth, adj$mean_est, 0, adj$null_mean + adj$null_q_lo, adj$null_mean + adj$null_q_hi),
+    what = c("True value", "Mean of estimates", "True value", rep("Rejection limits (5% test)", 2))
   )
   lines[, panel := factor(panel, levels = levels(d$panel))]
+  vals <- c("True value" = "black", "Mean of estimates" = "red",
+            "Rejection limits (5% test)" = "#1f6fb4")
   ggplot2::ggplot(d, ggplot2::aes(x)) +
     ggplot2::geom_histogram(bins = 60, fill = "grey70", colour = "white", linewidth = 0.2) +
     ggplot2::geom_vline(data = lines, ggplot2::aes(xintercept = x, colour = what, linetype = what),
                         linewidth = 0.9) +
     ggplot2::facet_wrap(~panel, scales = "free") +
-    ggplot2::scale_colour_manual(
-      values = c("True value" = "black", "Mean of estimates" = "red",
-                 "Nominal critical value" = "black", "Calibrated critical value" = "red"),
-      name = "Reference:"
-    ) +
+    ggplot2::scale_colour_manual(values = vals, name = "Reference:") +
     ggplot2::scale_linetype_manual(
       values = c("True value" = "solid", "Mean of estimates" = "dashed",
-                 "Nominal critical value" = "solid", "Calibrated critical value" = "dashed"),
+                 "Rejection limits (5% test)" = "dotted"),
       name = "Reference:"
     ) +
-    ggplot2::labs(x = "Estimated log HR (left) / z statistic (right)", y = "Number of simulated studies") +
+    ggplot2::labs(x = xlab, y = "Number of simulated studies") +
     theme_paper()
 }
 
-#' Marginal survival implied by a Weibull model with time-varying treatment
-#' @param m Fitted Weibull list; @param data Base data; @param times Time grid.
+#' Figure: nested simulation, estimated bias correction and adjusted estimate per outer dataset
+#' @param nested_obs Outer replicates at theta*; @param adj From `adjust_simple()`.
+#' @param xlab Axis label of the estimate scale.
+#' @return ggplot.
+plot_nested <- function(nested_obs, adj, xlab = "log HR") {
+  p1 <- "Estimated bias correction"
+  p2 <- "Bias-adjusted estimate"
+  ref <- "Simple adjustment (left) / true value (right)"
+  avg <- "Mean over outer datasets"
+  o <- nested_obs[!is.na(est_adj)]
+  d <- rbind(o[, .(x = bias_r, panel = p1)], o[, .(x = est_adj, panel = p2)])
+  d[, panel := factor(panel, levels = c(p1, p2))]
+  lines <- data.table::data.table(
+    panel = c(p1, p1, p2, p2),
+    x = c(adj$bias, mean(o$bias_r), adj$truth, mean(o$est_adj)),
+    what = c(ref, avg, ref, avg)
+  )
+  lines[, panel := factor(panel, levels = levels(d$panel))]
+  ggplot2::ggplot(d, ggplot2::aes(x)) +
+    ggplot2::geom_histogram(bins = 40, fill = "grey70", colour = "white", linewidth = 0.2) +
+    ggplot2::geom_vline(data = lines, ggplot2::aes(xintercept = x, colour = what, linetype = what),
+                        linewidth = 0.9) +
+    ggplot2::facet_wrap(~panel, scales = "free") +
+    ggplot2::scale_colour_manual(values = stats::setNames(c("black", "red"), c(ref, avg)),
+                                 name = "Reference:") +
+    ggplot2::scale_linetype_manual(values = stats::setNames(c("solid", "dashed"), c(ref, avg)),
+                                   name = "Reference:") +
+    ggplot2::labs(x = xlab, y = "Number of outer datasets") +
+    theme_paper()
+}
+
+#' Marginal survival implied by the fitted PH model (Weibull or generalized gamma baseline)
+#' @param m Fitted model list; @param data Base data; @param times Time grid.
 #' @return Numeric vector: mean over patients of S_i(t).
-weibull_marginal_surv <- function(m, data, times) {
+dgm_marginal_surv <- function(m, data, times) {
   X <- dgm_design(data, m$covariates)
   eh <- exp(m$alpha + drop(X %*% m$gamma))
+  h0 <- if (identical(m$family, "gengamma")) {
+    function(t) gg_cumhaz0(t / m$tau, m$sigma, m$Q)
+  } else {
+    function(t) t^m$rho
+  }
   vapply(times, function(t) {
     pre <- pmin(data$s, t)
-    H <- eh * (pre^m$rho + (data$s < t) * exp(m$theta_hat) * (t^m$rho - pre^m$rho))
+    H <- eh * (h0(pre) + (data$s < t) * exp(m$theta_hat) * (h0(t) - h0(pre)))
     mean(exp(-H))
   }, numeric(1))
 }
 
-#' Figure: fit of the Weibull outcome and censoring models (Kaplan-Meier vs model)
+#' @rdname dgm_marginal_surv
+weibull_marginal_surv <- dgm_marginal_surv
+
+#' Figure: fit of the outcome and censoring models (Kaplan-Meier vs model)
 #' @param data Base data; @param dgm Fitted DGM; @param spec Dataset config (outcome label).
 #' @return ggplot.
 plot_paper_fit <- function(data, dgm, spec) {
   times <- seq(0, max(data$time), length.out = 200)
+  lab_m <- if (identical(dgm$family, "gengamma")) "Generalized gamma model" else "Weibull model"
   km <- function(status, panel) {
     f <- survival::survfit(survival::Surv(data$time, status) ~ 1)
     data.table::data.table(time = c(0, f$time), surv = c(1, f$surv), what = "Kaplan-Meier", panel = panel)
   }
   wb <- function(m, panel) {
-    data.table::data.table(time = times, surv = weibull_marginal_surv(m, data, times),
-                           what = "Weibull model", panel = panel)
+    data.table::data.table(time = times, surv = dgm_marginal_surv(m, data, times),
+                           what = lab_m, panel = panel)
   }
   p1 <- spec$outcome_label
   p2 <- "Loss to follow-up"
@@ -499,24 +598,29 @@ plot_paper_fit <- function(data, dgm, spec) {
   d[, panel := factor(panel, levels = c(p1, p2))]
   ggplot2::ggplot(d, ggplot2::aes(time, surv, colour = what, linetype = what)) +
     ggplot2::geom_step(data = d[what == "Kaplan-Meier"], linewidth = 0.9) +
-    ggplot2::geom_line(data = d[what == "Weibull model"], linewidth = 0.9) +
+    ggplot2::geom_line(data = d[what == lab_m], linewidth = 0.9) +
     ggplot2::facet_wrap(~panel, scales = "free_y") +
-    ggplot2::scale_colour_manual(values = c("Kaplan-Meier" = "black", "Weibull model" = "red"), name = NULL) +
-    ggplot2::scale_linetype_manual(values = c("Kaplan-Meier" = "solid", "Weibull model" = "dashed"), name = NULL) +
+    ggplot2::scale_colour_manual(values = stats::setNames(c("black", "red"), c("Kaplan-Meier", lab_m)), name = NULL) +
+    ggplot2::scale_linetype_manual(values = stats::setNames(c("solid", "dashed"), c("Kaplan-Meier", lab_m)), name = NULL) +
     ggplot2::labs(x = "Days since time zero", y = "Proportion free of the event") +
     theme_paper() +
     ggplot2::theme(legend.position = "bottom")
 }
 
 #' Save all paper figures as PNG (600 dpi) and EPS
-#' @param performance,perf_adj,sim_results,data,dgm Pipeline targets (one dataset).
-#' @param z_crit Calibrated critical value; @param spec Dataset config; @param dir Output folder.
+#' @param perf From `compare_performance()`; @param sim_results Main replicates.
+#' @param nested_obs Outer replicates at theta*; @param data Base data; @param dgm Fitted DGM.
+#' @param adj From `adjust_simple()`; @param spec Dataset config; @param dir Output folder.
 #' @return Character vector of file paths.
-save_paper_figures <- function(performance, perf_adj, sim_results, data, dgm, z_crit, spec, dir) {
+save_paper_figures <- function(perf, sim_results, nested_obs, data, dgm, adj, spec, dir) {
   dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+  xl <- endpoint_info(spec$pipeline)
+  xl <- if (xl$endpoint == "hr") "log HR" else "Difference in 12-month survival"
   figs <- list(
-    fig_performance = list(plot_paper_performance(perf_adj), 13, 4.2),
-    fig_distribution = list(plot_paper_distribution(sim_results, performance, z_crit), 12, 4.6),
+    fig_performance = list(plot_paper_performance(perf), 15, 4.4),
+    fig_distribution = list(plot_paper_distribution(sim_results, adj, paste("Estimated", xl)),
+                            12, 4.6),
+    fig_nested = list(plot_nested(nested_obs, adj, xl), 12, 4.6),
     fig_model_fit = list(
       plot_paper_fit(data, dgm, spec), if (identical(dgm$cens$model, "weibull")) 10 else 6, 4.6
     )

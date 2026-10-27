@@ -15,16 +15,17 @@ theme_qba <- function() {
     )
 }
 
-#' Distribution of replayed estimates in the observed-effect scenario, one panel per dataset
+#' Distribution of replayed estimates at the calibrated effect theta*, one panel per dataset
 #' @param sim_all Stacked replicates (with `dataset`); @param perf_all Stacked performance.
 #' @param labels Named character vector: dataset key -> display label.
 #' @return ggplot.
 plot_estimates <- function(sim_all, perf_all, labels) {
-  po <- perf_all[scenario == "observed"]
+  # Hazard-ratio analyses only (the survival-difference analysis has its own figures)
+  po <- perf_all[scenario == "observed" & dataset %in% names(labels)]
   d <- merge(sim_all[!is.na(estimate)], po[, .(dataset, theta)], by = c("dataset", "theta"))
   lines <- rbind(
-    po[, .(dataset, x = exp(truth), what = "True HR (= observed CCW estimate)")],
-    po[, .(dataset, x = exp(mean_est), what = "Average of simulated estimates")]
+    po[, .(dataset, x = exp(truth), what = "True CCW HR at theta*")],
+    po[, .(dataset, x = exp(mean_est), what = "Average of simulated estimates (= observed)")]
   )
   d[, panel := labels[dataset]]
   lines[, panel := labels[dataset]]
@@ -45,13 +46,13 @@ plot_estimates <- function(sim_all, perf_all, labels) {
 #' @param perf_all Stacked performance; @param labels Dataset key -> display label.
 #' @return ggplot.
 plot_comparison <- function(perf_all, labels) {
-  po <- perf_all[scenario == "observed"]
-  pn <- perf_all[scenario == "null"]
+  po <- perf_all[scenario == "observed" & dataset %in% names(labels)]
+  pn <- perf_all[scenario == "null" & dataset %in% names(labels)]
   d <- rbind(
-    po[, .(dataset, metric = "Bias (% of SE), true HR = observed",
+    po[, .(dataset, metric = "Bias (% of SE), calibrated effect",
            value = 100 * std_bias, lo = 100 * (bias - 1.96 * bias_mcse_total) / emp_se,
            hi = 100 * (bias + 1.96 * bias_mcse_total) / emp_se, ref = 0)],
-    po[, .(dataset, metric = "95% CI coverage (%), true HR = observed",
+    po[, .(dataset, metric = "95% CI coverage (%), calibrated effect",
            value = 100 * coverage, lo = 100 * (coverage - 1.96 * coverage_mcse),
            hi = 100 * (coverage + 1.96 * coverage_mcse), ref = 95)],
     pn[, .(dataset, metric = "Type I error (%), no effect",
@@ -62,8 +63,9 @@ plot_comparison <- function(perf_all, labels) {
   d[, metric := factor(metric, levels = unique(metric))]
   ggplot2::ggplot(d, ggplot2::aes(value, label)) +
     ggplot2::geom_vline(ggplot2::aes(xintercept = ref), linetype = "22", colour = viz_cols[["ink2"]]) +
-    ggplot2::geom_errorbarh(ggplot2::aes(xmin = lo, xmax = hi), height = 0, colour = viz_cols[["blue"]],
-                            linewidth = 0.7) +
+    # geom_errorbarh() is deprecated since ggplot2 4.0.0; orientation = "y" works from 3.3.0
+    ggplot2::geom_errorbar(ggplot2::aes(xmin = lo, xmax = hi), orientation = "y", width = 0,
+                           colour = viz_cols[["blue"]], linewidth = 0.7) +
     ggplot2::geom_point(colour = viz_cols[["blue"]], size = 2.8) +
     ggplot2::geom_text(ggplot2::aes(label = formatC(value, format = "f", digits = 1)),
                        vjust = -1.1, size = 3.2, colour = viz_cols[["ink"]]) +

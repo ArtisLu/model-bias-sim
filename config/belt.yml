@@ -1,8 +1,11 @@
-# Confidence belt (test inversion over a grid of true effects). Kept apart from config.yml
-# on purpose: every target depends on cfg, so a key added there would rerun the replicates.
+# Optional CI comparison (not part of the paper's adjustment): simulation bootstrap-t and the
+# confidence belt (test inversion over a grid of true effects). Off by default since paper v0.64
+# specifies the non-parametric adjustment; set enabled: true to build them. Kept apart from
+# config.yml so that toggling them does not rerun the replicates.
 # Profiles follow R_CONFIG_ACTIVE; a profile not listed here uses `default`.
 
 default:
+  enabled: false
   # Grid: Chebyshev-Lobatto nodes in psi over the range where CI endpoints fall (observed CI and
   # the tail quantiles of the main replicates' Wald endpoints), mapped to theta via psi(theta)
   n_nodes: 5         # nodes; together with theta* and 0 they carry the quantile curves
@@ -21,7 +24,9 @@ default:
   # 0.1 at theta*); only refits the belt, its grid and replicates are unaffected (_targets.R)
   degree: 3          # polynomial in psi for the quantile curves of T
 
+# Smoke run builds the optional targets too, so their code stays tested
 smoke:
+  enabled: true
   n_nodes: 3
   anchor_n_rep: 1
   B_start: 10

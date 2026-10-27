@@ -1,8 +1,8 @@
-# True value psi(theta): the large-sample limit of the CCW estimator in the
-# simulated world (the "CCW model parameter"; ADEMP E1), and the calibration of theta*.
-# One large dataset per (theta, seed) is the unit of work, so truths and calibration steps
-# run as parallel branches, and every evaluation is reused wherever the same (theta, seed)
-# is needed again (CRN: seed j is the same large dataset at every theta).
+# True value psi(theta): the large-sample limit of the CCW estimator in the simulated world
+# (ADEMP E1), and the inverse calibration of the generating value (paper Section 2.7.1).
+# One large dataset per (theta, seed) is the unit of work, so truths run as parallel branches and
+# every evaluation is reused wherever the same (theta, seed) is needed again (CRN: seed j is the
+# same large dataset at every theta).
 
 #' Stack K copies of the base data with unique ids
 #' @param data Base data; @param K Number of copies.
@@ -18,8 +18,10 @@ stack_copies <- function(data, K) {
 #' @param seed_id Index into `seeds`; @param seeds Truth seeds from `make_crn_seeds()`.
 #' @param pipeline Pipeline spec; @param cfg Full config (uses `truth$n_target`).
 #' @param known Earlier evaluations (theta, seed_id, estimate, n_truth) to reuse, or NULL.
+#' @param n_target Patients per large dataset (default `cfg$truth$n_target`).
 #' @return One-row data.table: theta, seed_id, estimate, n_truth.
-truth_point <- function(dgm, data, theta, seed_id, seeds, pipeline, cfg, known = NULL) {
+truth_point <- function(dgm, data, theta, seed_id, seeds, pipeline, cfg, known = NULL,
+                        n_target = cfg$truth$n_target) {
   checkmate::assert_number(theta)
   checkmate::assert_int(seed_id, lower = 1, upper = length(seeds))
   if (!is.null(known) && nrow(known)) {
@@ -29,7 +31,7 @@ truth_point <- function(dgm, data, theta, seed_id, seeds, pipeline, cfg, known =
     hit <- known[abs(theta - th) < 1e-10 & seed_id == sid]
     if (nrow(hit)) return(hit[1, .(theta, seed_id, estimate, n_truth)])
   }
-  big <- stack_copies(data, ceiling(cfg$truth$n_target / nrow(data)))
+  big <- stack_copies(data, ceiling(n_target / nrow(data)))
   rng <- draw_replicate_rng(seeds[seed_id], nrow(big))
   sim <- simulate_outcomes(big, dgm, theta, rng$u_event, rng$u_cens)
   data.table::data.table(
@@ -52,78 +54,114 @@ summarise_truth <- function(rows, seed_ids = NULL) {
 }
 
 #' Large-sample truth at one theta (serial; the pipeline branches over seeds instead)
-#' @param dgm,data,theta,pipeline,cfg As in `truth_point()`; @param n_rep Large datasets.
+#' @param dgm,data,theta,pipeline,cfg As in `truth_point()`; @param n_rep Large datasets to average.
+#' @param n_target Patients per large dataset; @param seed Seed of the large datasets (CRN across theta).
 #' @return One-row data.table: theta, truth, truth_mcse, n_truth, n_rep.
-compute_truth <- function(dgm, data, theta, pipeline, cfg, n_rep = cfg$truth$n_rep) {
-  # Same seeds at every theta (CRN), so psi(theta) is smooth for calibration
-  seeds <- make_crn_seeds(cfg$seed_truth, n_rep)
+compute_truth <- function(dgm, data, theta, pipeline, cfg, n_rep = cfg$truth$n_rep,
+                          n_target = cfg$truth$n_target, seed = cfg$seed_truth) {
+  # Same seeds at every theta (CRN), so psi(theta) is smooth in theta
+  seeds <- make_crn_seeds(seed, n_rep)
   rows <- data.table::rbindlist(lapply(seq_len(n_rep), function(j) {
-    truth_point(dgm, data, theta, j, seeds, pipeline, cfg)
+    truth_point(dgm, data, theta, j, seeds, pipeline, cfg, n_target = n_target)
   }))
   summarise_truth(rows)
 }
 
-#' Starting values of the calibration search (paper Step 3)
-#' @param dgm Fitted DGM; @param min_gap Smallest |theta_hat| for which 0 is the second start.
-#' @return Two theta values.
-calib_start <- function(dgm, min_gap = 0.25) {
-  th <- dgm$theta_hat
-  # psi(0) is needed anyway as the null-scenario truth, so 0 is a free second start; it is
-  # only uninformative for the secant when theta_hat is itself close to 0
-  if (abs(th) >= min_gap) c(th, 0) else c(th, th - 0.5)
+#' Pipeline estimates of simulated studies at one theta (failed fits are NA)
+#' @param data Base data; @param dgm Fitted DGM; @param theta Generating log-HR.
+#' @param seeds Replicate seeds; @param pipeline Pipeline spec.
+#' @return Numeric vector, one estimate per seed.
+replicate_estimates <- function(data, dgm, theta, seeds, pipeline) {
+  vapply(seeds, function(sd) {
+    rng <- draw_replicate_rng(sd, nrow(data))
+    sim <- simulate_outcomes(data, dgm, theta, rng$u_event, rng$u_cens)
+    # Only the point estimate is needed, which does not depend on the variance estimator
+    safely_run(run_pipeline, sim, pipeline, robust = FALSE)$estimate
+  }, numeric(1))
 }
 
-#' Next calibration point from all evaluations so far
-#' @param rows From `truth_point()`; @param target Observed CCW estimate.
-#' @param cc `cfg$calibration` (tol, bound).
-#' @return Scalar theta: the best point so far once within tol, else a secant step.
-calib_next <- function(rows, target, cc) {
-  checkmate::assert_number(target, finite = TRUE)
-  checkmate::assert_number(cc$tol, lower = 0)
-  checkmate::assert_number(cc$bound, lower = 0)
-  ps <- summarise_truth(rows)
-  ps[, gap := truth - target]
-  best <- ps[which.min(abs(gap))]
-  if (abs(best$gap) < cc$tol || nrow(ps) < 2) return(best$theta)
-  # Interpolate between the closest points bracketing the target, else secant through the
-  # two closest points; psi is smooth and monotone in theta under CRN
-  lo <- ps[gap < 0][which.max(gap)]
-  hi <- ps[gap > 0][which.min(gap)]
-  pair <- if (nrow(lo) && nrow(hi)) rbind(lo, hi) else ps[order(abs(gap))][1:2]
-  slope <- diff(pair$truth) / diff(pair$theta)
-  th <- pair$theta[1] + (target - pair$truth[1]) / slope
-  if (!is.finite(th)) return(best$theta)
-  max(-cc$bound, min(cc$bound, th))
-}
-
-#' Finish the calibration: serial secant steps if the parallel stages did not converge
-#' @param rows Evaluations from the parallel stages; @param dgm,data,pipeline,cfg As above.
-#' @param obs_result Observed pipeline result; @param seeds Truth seeds.
-#' @param n_stages Parallel refinement stages already run (count towards `max_iter`).
-#' @return List: theta_star, psi_star, at_bound, path (search history), evals (all rows).
-finish_calibration <- function(rows, dgm, data, obs_result, pipeline, cfg, seeds, n_stages = 2L) {
-  cc <- cfg$calibration
-  target <- obs_result$estimate
-  ids <- seq_len(cc$n_rep)
-  for (i in seq_len(max(0L, cc$max_iter - n_stages))) {
-    th <- calib_next(rows, target, cc)
-    if (any(abs(rows$theta - th) < 1e-10)) break
-    rows <- rbind(rows, data.table::rbindlist(lapply(ids, function(j) {
-      truth_point(dgm, data, th, j, seeds, pipeline, cfg)
-    })))
+#' Inverse calibration: theta whose mean simulated estimate m(theta) equals a target (paper 2.7.1)
+#' The search starts at `start[1]` and stops there if m is already within `cc$tol` of the target.
+#' @param dgm Fitted DGM; @param data Base data; @param target Estimate to reproduce.
+#' @param seeds Replicate seeds, reused at every theta (CRN makes m(theta) smooth and monotone).
+#' @param pipeline Pipeline spec; @param cc List with max_iter, tol, bound.
+#' @param start First theta (default `cc$start`); an optional second element is the second point.
+#' @param slope Expected dm/dtheta; if given, the second point is a Newton step from `start[1]`;
+#'   without it the second point is `start[2]` or, if absent, a unit-slope step.
+#' @return List: theta_cal, mean_est, mean_est_mcse, n_ok, estimates (at theta_cal), slope,
+#'   at_bound, n_eval, path.
+calibrate_mean <- function(dgm, data, target, seeds, pipeline, cc, start = cc$start, slope = NULL) {
+  checkmate::assert_number(target)
+  checkmate::assert_numeric(start, min.len = 1, any.missing = FALSE)
+  clamp <- function(x) max(-cc$bound, min(cc$bound, x))
+  evals <- list()
+  run_at <- function(th) {
+    est <- replicate_estimates(data, dgm, th, seeds, pipeline)
+    evals[[length(evals) + 1L]] <<- list(theta = th, m = mean(est, na.rm = TRUE), est = est)
   }
-  ps <- summarise_truth(rows, ids)
-  best <- ps[which.min(abs(truth - target))]
-  # Order of first evaluation = search order
-  first <- unique(rows[, .(theta)])
-  path <- ps[match(first$theta, ps$theta), .(step = seq_len(.N), theta, psi = truth)]
+  prior_slope <- if (is.null(slope)) 1 else slope
+  last_slope <- function() {
+    n <- length(evals)
+    if (n < 2L) return(prior_slope)
+    s <- (evals[[n]]$m - evals[[n - 1L]]$m) / (evals[[n]]$theta - evals[[n - 1L]]$theta)
+    # A flat or undefined secant (failed fits, same theta) falls back to the prior slope
+    if (is.finite(s) && abs(s) > 1e-8) s else prior_slope
+  }
+  run_at(clamp(start[1]))
+  if (is.finite(evals[[1]]$m) && abs(evals[[1]]$m - target) >= cc$tol) {
+    th2 <- if (!is.null(slope)) {
+      clamp(evals[[1]]$theta + (target - evals[[1]]$m) / slope)
+    } else if (length(start) >= 2L) {
+      start[2]
+    } else {
+      clamp(evals[[1]]$theta + (target - evals[[1]]$m))
+    }
+    if (abs(th2 - evals[[1]]$theta) > 1e-6) run_at(th2)
+  }
+  for (i in seq_len(cc$max_iter)) {
+    n <- length(evals)
+    if (!is.finite(evals[[n]]$m) || abs(evals[[n]]$m - target) < cc$tol) break
+    th_new <- clamp(evals[[n]]$theta + (target - evals[[n]]$m) / last_slope())
+    if (abs(th_new - evals[[n]]$theta) < 1e-6) break
+    run_at(th_new)
+  }
+  path <- data.table::rbindlist(lapply(seq_along(evals), function(k) {
+    data.table::data.table(step = k, theta = evals[[k]]$theta, mean_est = evals[[k]]$m,
+                           n_ok = sum(!is.na(evals[[k]]$est)))
+  }))
+  if (!any(is.finite(path$mean_est))) {
+    cli::cli_abort("All simulated analyses failed in calibration.")
+  }
+  best <- which.min(abs(path$mean_est - target))
+  est <- evals[[best]]$est
   list(
-    theta_star = best$theta,
-    psi_star = best$truth,
-    at_bound = abs(best$theta) >= cc$bound,
-    path = path,
-    evals = rows
+    theta_cal = path$theta[best],
+    mean_est = path$mean_est[best],
+    mean_est_mcse = stats::sd(est, na.rm = TRUE) / sqrt(sum(!is.na(est))),
+    n_ok = sum(!is.na(est)),
+    estimates = est,
+    slope = last_slope(),
+    at_bound = abs(path$theta[best]) >= cc$bound,
+    n_eval = nrow(path),
+    path = path
   )
+}
+
+#' Calibrate the observed analysis: m(theta) = observed estimate (paper Steps 2.3 and 2.7.1)
+#' @param dgm Fitted DGM; @param data Base data; @param obs_result Observed pipeline result.
+#' @param seeds CRN seeds of the main run (the first `cfg$calibration$B` are used).
+#' @param pipeline Pipeline spec; @param cfg Full config.
+#' @param slope,tol_scale Dataset-level guess of dm/dtheta (first Newton step) and the multiplier
+#'   of the tolerance for the scale of the estimate (`calib_slope`, `tol_scale` in the config).
+#' @return `calibrate_mean()` result without the replicate estimates, plus target.
+calibrate_observed <- function(dgm, data, obs_result, seeds, pipeline, cfg, slope = NULL,
+                               tol_scale = 1) {
+  cc <- cfg$calibration
+  cc$tol <- cc$tol * tol_scale
+  cal <- calibrate_mean(dgm, data, obs_result$estimate, seeds[seq_len(min(cc$B, length(seeds)))],
+                        pipeline, cc, slope = slope)
+  cal$estimates <- NULL
+  c(cal, list(target = obs_result$estimate, B = min(cc$B, length(seeds))))
 }
 
 #' Monotone interpolation of psi(theta) through the evaluated points
