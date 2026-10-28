@@ -210,3 +210,25 @@ b100k:
   nested:
     outer: 2000        # pilot: B = 1,251 gives a 2% relative MCSE of the SE; 2,000 gives 1.6%
     inner: 50          # as the default (pilot: R = 50, see the default profile)
+
+preview:
+  B: 1000
+  B_validation: 1000
+  batch_size: 100
+  truth:
+    n_target: 20000
+    n_rep: 4
+  calibration:
+    B: 500
+  nested:
+    outer: 60
+    inner: 50
+    batch_size: 5
+  pilot:
+    outer: 10
+    inner: 50
+    batch_size: 5
+    timing_reps: 20
+    precision_rel_se: 0.02
+    min_outer_percentile: 1000
+    min_inner_limits: 50
