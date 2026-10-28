@@ -437,7 +437,7 @@ rns <- nested_rct_maringe$summary
 pr <- function(an, meth, m) perf_compare_rct_maringe[analysis == an & method == meth & measure == m]
 ```
 
-Target at θ\*: HR `r hr(r_o$truth)` (CCW limit: `r hr(adj$truth)`); at no effect: HR `r hr(r_n$truth)` (CCW limit `r hr(tn$truth)`). Adjusted HR `r hr(ra$est_adj)` (`r ci(ra$ci_lo_np, ra$ci_hi_np)`) with the simple adjustment, `r ci(rns$ci_lo_np, rns$ci_hi_np)` nested. Bias of the observed analysis against this target: `r vb(pr("CCW", "Wald (robust SE)", "Bias"))`; coverage `r vp(pr("CCW", "Wald (robust SE)", "95% CI coverage"))`; after the simple adjustment `r vp(pr("Simple adjustment", "Non-parametric", "95% CI coverage"))`, nested `r vp(pr("Nested adjustment", "Non-parametric", "95% CI coverage"))`.
+Target at θ\*: HR `r hr(r_o$truth)` (CCW limit: `r hr(adj$truth)`); at no effect: HR `r hr(r_n$truth)` (CCW large-sample limit `r hr(tn$psi_large_sample)`; the CCW truth for no effect is HR 1 by convention, Section 2.2). Adjusted HR `r hr(ra$est_adj)` (`r ci(ra$ci_lo_np, ra$ci_hi_np)`) with the simple adjustment, `r ci(rns$ci_lo_np, rns$ci_hi_np)` nested. Bias of the observed analysis against this target: `r vb(pr("CCW", "Wald (robust SE)", "Bias"))`; coverage `r vp(pr("CCW", "Wald (robust SE)", "95% CI coverage"))`; after the simple adjustment `r vp(pr("Simple adjustment", "Non-parametric", "95% CI coverage"))`, nested `r vp(pr("Nested adjustment", "Non-parametric", "95% CI coverage"))`.
 
 ```{r tab-rct}
 #| tbl-cap: "Performance against the hypothetical-trial target."
@@ -499,7 +499,7 @@ if (has_belt) {
 | RMSE and RMSE² in all outputs; no power | **Implemented** (Sections 1, 3, 4, A1). |
 | 4.6: generalized-gamma prediction model | **Implemented** (Section 6.2; own store). |
 | 4.6: bias correction for an estimator that is not consistent | **Implemented** (Section 6.3; hypothetical-trial target). |
-| Appendix: optimal outer / inner split from a pilot | **Implemented** (Section 6.4); production `nested: outer` × `inner` = `r cfg$nested$outer` × `r cfg$nested$inner`. |
+| Appendix: optimal outer / inner split from a pilot | **Implemented** (Section 6.4); nested `outer` × `inner` in this run = `r cfg$nested$outer` × `r cfg$nested$inner` (pilot of `r cfg$pilot$outer` × `r cfg$pilot$inner`). |
 | Comment on Figure 3: CI coverage not centred on 95% | Under adjustment: `r pct(sa("95% CI coverage")$value)` (simple), `r pct(na("95% CI coverage")$value)` (nested), with MCSE in Section 4. |
 
 # 8. Caveats and next steps
