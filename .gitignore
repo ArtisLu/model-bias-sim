@@ -7,3 +7,4 @@ reports/qba_report_files/
 .DS_Store
 reports/paper/*_files/
 reports/smoke/
+reports/sens_smoke/

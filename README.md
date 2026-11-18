@@ -84,6 +84,29 @@ targets::tar_make(store = "_targets_gengamma")
 Sys.unsetenv("R_CONFIG_ACTIVE")
 ```
 
+**Prediction-model sensitivity analysis (paper 3.8; Nov 2026).** Weibull (primary), exponential and
+generalized gamma side by side in one store: one dataset entry per outcome model (`maringe`, `maringe_exp`,
+`maringe_gg`), same data, pipeline and seeds, log HR only, simple adjustment only (`nested: enabled: false`
+drops the nested simulation, the pilot and the hypothetical-trial target).
+
+```r
+Sys.setenv(R_CONFIG_ACTIVE = "sens_smoke"); targets::tar_make(store = "_targets_sens_smoke")  # ~1 min
+Sys.setenv(R_CONFIG_ACTIVE = "sens_check", QBA_WORKERS = parallel::detectCores() - 1)  # B = 4,000, timing
+targets::tar_make(store = "_targets_sens_check")
+Sys.setenv(R_CONFIG_ACTIVE = "sens")                                                   # B = 100,000
+targets::tar_make(store = "_targets_sens")
+Sys.unsetenv("R_CONFIG_ACTIVE")
+```
+
+Outputs in `reports/<profile>/`: `sensitivity_report.html` (needs the Quarto CLI), `fig_sens_fit.png`,
+`fig_sens_distribution.png`, `fig_comparison.png`; targets `sens_fit` (model fit, likelihood-ratio tests),
+`sens_table` (calibration, bias, SE, coverage, type I error, CI and rejection limits with MCSE, adjusted
+analysis per model, difference in bias from the primary model) and `sens_conservative_all` (conservative
+combination; `sens_conservative(adjustment_all, keep = ...)` restricts it to models with comparable fit).
+The exponential model is stored as a Weibull with the shape fixed at 1 (`restriction = "exponential"`), so
+simulation and truth run through the unchanged Weibull code. The `nested: enabled` and `sensitivity` keys
+exist in the `sens*` profiles only, so the stores of the other profiles stay valid.
+
 The 12-month survival endpoint is a second dataset entry (`maringe_surv12`) with the same data and prediction
 model. The hypothetical-trial target (`truth_rct_*`, `adjustment_rct_*`, `nested_rct_*`, `perf_compare_rct_*`;
 HR endpoint only; assumptions in `rct:` and `protocol/ADEMP.md`) reuses the replicates and the inner runs;
@@ -135,8 +158,8 @@ from `reports/qba_report.qmd` when Maringe is active and the Quarto CLI is insta
 | Path | Content |
 |---|---|
 | `_targets.R` | pipeline (only entry point) |
-| `R/` | data, dgm (Weibull, generalized gamma), truth (incl. inverse calibration), pipeline (log HR, 12-month survival difference), simulate, performance, correction (simple adjustment and its check), nested, allocation (pilot, outer / inner split), rct (hypothetical-trial target), plots, paper, belt (optional), utils |
-| `config/config.yml` | seeds, B, check, nested and pilot sizes, truth size, calibration, `rct`, datasets (profiles `default`, `smoke`, `two_datasets`, `gengamma`, `b100k`) |
+| `R/` | data, dgm (Weibull, exponential, generalized gamma), truth (incl. inverse calibration), pipeline (log HR, 12-month survival difference), simulate, performance, correction (simple adjustment and its check), nested, allocation (pilot, outer / inner split), rct (hypothetical-trial target), sensitivity (prediction-model comparison), plots, paper, belt (optional), utils |
+| `config/config.yml` | seeds, B, check, nested and pilot sizes, truth size, calibration, `rct`, datasets (profiles `default`, `smoke`, `two_datasets`, `gengamma`, `b100k`, `sens_smoke`, `sens_check`, `sens`) |
 | `config/belt.yml` | optional bootstrap-t / confidence-belt comparison (`enabled: false` by default) |
 | `data/raw/` | Maringe lung cancer CSV and SynPUF tutorial cohort (read-only) + source/checksums |
 | `tests/testthat/` | unit tests |

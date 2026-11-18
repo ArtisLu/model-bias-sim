@@ -1,7 +1,7 @@
 # Reference data-generating model: PH model for the outcome with treatment as a time-varying
-# exposure and a Weibull (default) or 3-parameter generalized gamma baseline hazard (sensitivity
-# analysis, paper Section 4.6), plus a Weibull PH model for loss to follow-up fitted with the
-# event/censoring indicator switched (paper Section 2.3). Simulation by inversion (CRN).
+# exposure and a Weibull (default), exponential or 3-parameter generalized gamma baseline hazard
+# (sensitivity analysis, paper Section 3.8), plus a Weibull PH model for loss to follow-up fitted
+# with the event/censoring indicator switched (paper Section 2.3). Simulation by inversion (CRN).
 
 #' Design matrix of DGM covariates (no intercept)
 #' @param data Base data.
@@ -55,6 +55,48 @@ fit_weibull_tv <- function(data, covariates, status) {
     loglik = -fit$value,
     n_events = sum(status)
   )
+}
+
+#' Fit the exponential PH model (Weibull with the shape fixed at 1) with time-varying treatment
+#' Returned in the Weibull format (family "weibull", rho = 1) so that simulation, truth and model
+#' checks run through the Weibull code unchanged; `restriction` marks the fixed shape.
+#' @param data Base data; @param covariates Covariate names; @param status Event indicator.
+#' @return List like `fit_weibull_tv()` plus restriction = "exponential" and the log-likelihood of
+#'   the unrestricted Weibull `loglik_weibull` for a likelihood-ratio check.
+fit_exponential_tv <- function(data, covariates, status) {
+  wb <- fit_weibull_tv(data, covariates, status)
+  X <- dgm_design(data, covariates)
+  p <- ncol(X)
+  # Same likelihood with log(rho) held at 0
+  nll <- function(q) {
+    dgm_negloglik(c(q[1], 0, q[-1]), X = X, time = data$time, status = status, s = data$s)
+  }
+  start <- c(log(sum(status) / sum(data$time)), rep(0, p), 0)
+  fit <- stats::optim(start, nll, method = "BFGS", hessian = TRUE,
+                      control = list(maxit = 1000, reltol = 1e-12))
+  if (fit$convergence != 0) cli::cli_abort("Exponential fit did not converge.")
+  vc <- solve(fit$hessian)
+  nm <- c("alpha", colnames(X), "theta")
+  dimnames(vc) <- list(nm, nm)
+  list(
+    family = "weibull", restriction = "exponential",
+    alpha = fit$par[1],
+    rho = 1,
+    gamma = stats::setNames(fit$par[1 + seq_len(p)], colnames(X)),
+    theta_hat = fit$par[p + 2],
+    se = stats::setNames(sqrt(diag(vc)), nm),
+    covariates = covariates,
+    loglik = -fit$value, loglik_weibull = wb$loglik,
+    n_events = sum(status)
+  )
+}
+
+#' Display name of the outcome model of a fitted DGM
+#' @param dgm Fitted DGM.
+#' @return "Weibull", "Exponential" or "Generalized gamma".
+dgm_model_label <- function(dgm) {
+  if (identical(dgm$restriction, "exponential")) return("Exponential")
+  if (identical(dgm$family, "gengamma")) "Generalized gamma" else "Weibull"
 }
 
 #' Baseline of the generalized gamma (flexsurv parametrisation, mu = 0): cumulative hazard
@@ -148,16 +190,18 @@ fit_gengamma_tv <- function(data, covariates, status) {
 
 #' Fit the reference DGM (outcome and censoring models) to the base data
 #' @param data Base data from `prepare_base_data()`.
-#' @param spec `cfg$dgm` (`family`: weibull, default, or gengamma);
+#' @param spec `cfg$dgm` (`family`: weibull, default, exponential or gengamma);
 #' @param cens_spec `cfg$censoring` (model: none, fixed or weibull).
 #' @return Outcome-model list (see `fit_weibull_tv()`, `fit_gengamma_tv()`) with element `cens`.
 fit_dgm <- function(data, spec, cens_spec = list(model = "fixed")) {
   checkmate::assert_data_table(data)
   checkmate::assert_choice(cens_spec$model, c("none", "fixed", "weibull"))
   family <- if (is.null(spec$family)) "weibull" else spec$family
-  checkmate::assert_choice(family, c("weibull", "gengamma"))
+  checkmate::assert_choice(family, c("weibull", "exponential", "gengamma"))
   dgm <- if (family == "gengamma") {
     fit_gengamma_tv(data, spec$covariates, data$status)
+  } else if (family == "exponential") {
+    fit_exponential_tv(data, spec$covariates, data$status)
   } else {
     c(list(family = "weibull"), fit_weibull_tv(data, spec$covariates, data$status))
   }

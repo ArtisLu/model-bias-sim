@@ -108,3 +108,28 @@ test_that("generalized gamma refit recovers the treatment effect of a large simu
   km <- summary(survival::survfit(survival::Surv(time, status) ~ 1, data = sim), times = tm)$surv
   expect_equal(dgm_marginal_surv(re, sim, tm), km, tolerance = 0.03)
 })
+
+test_that("exponential model is the Weibull with shape 1 and simulates through the Weibull code", {
+  sp <- spec_m$dgm
+  sp$family <- "exponential"
+  wb <- fit_dgm(base_test, spec_m$dgm, spec_m$censoring)
+  ex <- fit_dgm(base_test, sp, spec_m$censoring)
+  expect_equal(ex$rho, 1)
+  expect_equal(dgm_model_label(ex), "Exponential")
+  expect_equal(dgm_model_label(wb), "Weibull")
+  # Restricted model: likelihood not above the Weibull, equal to the Weibull likelihood at rho = 1
+  expect_lte(ex$loglik, wb$loglik + 1e-6)
+  expect_equal(ex$loglik_weibull, wb$loglik, tolerance = 1e-8)
+  X <- dgm_design(base_test, sp$covariates)
+  expect_equal(-dgm_negloglik(c(ex$alpha, 0, ex$gamma, ex$theta_hat), X, base_test$time,
+                              base_test$status, base_test$s), ex$loglik, tolerance = 1e-8)
+  # Simulated untreated times are exponential: E = -log(u) = rate * t
+  u <- draw_replicate_rng(3, nrow(base_test))$u_event
+  d <- copy(base_test)[, `:=`(cens_time = Inf, s = Inf)]
+  eta <- ex$alpha + drop(X %*% ex$gamma)
+  expect_equal(simulate_outcomes(d, ex, 0, u)$time, unname(-log(u) / exp(eta)), tolerance = 1e-10)
+  # Refit of a large simulated dataset recovers the treatment effect
+  big <- stack_copies(base_test, 40)
+  sim <- simulate_outcomes(big, ex, -0.6, draw_replicate_rng(7, nrow(big))$u_event)
+  expect_equal(fit_dgm(sim, sp)$theta_hat, -0.6, tolerance = 0.1)
+})

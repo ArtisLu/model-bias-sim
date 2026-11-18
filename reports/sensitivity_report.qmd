@@ -1,0 +1,192 @@
+---
+title: "How sensitive is the modelling-bias adjustment to the prediction model?"
+subtitle: "Maringe lung cancer example, log hazard ratio: Weibull, exponential and generalized gamma prediction models, simple adjustment (paper Section 3.8)"
+author: "Artis Luguzis"
+date: today
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    theme: cosmo
+    fontsize: 1rem
+    fig-width: 7
+    html-math-method: mathml
+params:
+  store: ""
+  root: ""
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(data.table)
+root <- if (nzchar(params$root)) params$root else normalizePath(".", winslash = "/")
+while (!file.exists(file.path(root, "_targets.R")) && dirname(root) != root) root <- dirname(root)
+store <- if (nzchar(params$store)) params$store else file.path(root, "_targets_sens")
+rd <- function(name) targets::tar_read_raw(name, store = store)
+fit <- rd("sens_fit")
+st <- rd("sens_table")
+cons <- rd("sens_conservative_all")
+cal <- rd("calibration_all")
+obs <- rd("obs_all")[[1]]
+session <- rd("session")
+lab <- setNames(fit$label, fit$dataset)
+st[, Model := lab[dataset]]
+primary <- st[d_bias_mcse == 0, dataset][1]
+B <- st$n_sim[1]
+n0 <- function(x) format(x, big.mark = ",")
+f3 <- function(x) formatC(x, format = "f", digits = 3)
+f4 <- function(x) formatC(x, format = "f", digits = 4)
+pct <- function(x, d = 1) paste0(formatC(100 * x, format = "f", digits = d), "%")
+pm <- function(x, se, f = f4) paste0(f(x), " (", f(se), ")")
+hr <- function(x) formatC(exp(x), format = "f", digits = 3)
+fig <- function(path) file.path(root, path)
+```
+
+## Summary
+
+The bias correction, the confidence interval and the rejection limits of the QBA are derived from studies simulated under a prediction model fitted to the observed data. Within one model the true value is known, so the adjustment is correct by construction; what can differ between models is the size of the correction that is carried over to the observed estimate. This report repeats the same analysis under three outcome models and compares the results.
+
+- **Design.** Same base data (n = `r n0(nrow(rd("base_all")[[1]]))`), same CCW pipeline and same random numbers under every model: replicate *b* uses the same uniform draws, so differences between models are not Monte Carlo noise from different draws. `r n0(B)` simulated studies per scenario (calibrated effect and no effect) and model. Simple adjustment only: no nested simulation, no pilot study, hazard ratio endpoint only.
+- **Models.** Weibull (primary), exponential (Weibull with the shape fixed at 1) and three-parameter generalized gamma (Weibull at Q = 1), all proportional hazards in the covariates with a time-varying treatment effect.
+- **Largest difference in bias from the primary model:** `r f4(st[which.max(abs(d_bias)), d_bias])` on the log HR scale (`r st[which.max(abs(d_bias)), Model]`; MCSE `r f4(st[which.max(abs(d_bias)), d_bias_mcse])`), against an empirical SE of the estimate of `r f3(st[dataset == primary, emp_se])`.
+- **Adjusted HR:** `r paste0(st$Model, " ", hr(st$est_adj), " (", hr(st$ci_lo_np), " to ", hr(st$ci_hi_np), ")", collapse = "; ")`. Observed HR `r hr(obs$estimate)` (`r hr(obs$ci_lo)` to `r hr(obs$ci_hi)`).
+
+## 1 Prediction models and their fit
+
+```{r tab-fit}
+#| tbl-cap: "Fit of the outcome models to the observed data. Likelihood-ratio test with 1 degree of freedom against the Weibull model."
+knitr::kable(
+  fit[, .(Model = label, Parameters = n_par, `Log-likelihood` = formatC(loglik, format = "f", digits = 2),
+          AIC = formatC(aic, format = "f", digits = 1), Shape = shape,
+          `Treatment log HR (SE)` = pm(theta_hat, theta_se, f3),
+          `LR test p` = ifelse(is.na(lr_p), "", formatC(lr_p, format = "f", digits = 3)))],
+  align = "lrrrlrr"
+)
+```
+
+![Kaplan-Meier curve of the observed outcome (black) and marginal survival implied by each model.](`r fig(rd("fig_sens_fit"))`)
+
+The conservative combination of Section 4 is meant for models that fit about equally well; a model with a clearly worse fit is a stress test of misspecification and should be read as such.
+
+## 2 Calibration and performance of the CCW analysis
+
+```{r tab-cal}
+#| tbl-cap: "Inverse calibration (mean simulated estimate = observed estimate) and true value under each model. Log HR scale; Monte Carlo SE in brackets."
+cl <- rbindlist(lapply(st$dataset, function(ds) {
+  x <- cal[[grep(paste0("(^|_)", ds, "$"), names(cal))[1]]]
+  data.table(dataset = ds, steps = x$n_eval, mean_est = x$mean_est, at_bound = x$at_bound)
+}))
+knitr::kable(
+  merge(st, cl, by = "dataset", sort = FALSE)[, .(
+    Model, `Generating log HR θ*` = f3(theta_cal), `Search steps` = steps,
+    `Mean estimate at θ*` = f4(mean_est), `True value ψ(θ*)` = pm(truth, truth_mcse),
+    `Failed analyses` = n_fail
+  )],
+  align = "lrrrrr"
+)
+```
+
+```{r tab-perf}
+#| tbl-cap: "Performance of the CCW analysis as published (Wald interval, robust SE) under each model. Monte Carlo SE in brackets."
+knitr::kable(
+  st[, .(Model, Bias = pm(bias, bias_mcse),
+         `Difference from primary` = ifelse(d_bias_mcse == 0, "", pm(d_bias, d_bias_mcse)),
+         `Empirical SE` = pm(emp_se, emp_se_mcse), `Model SE` = f4(mod_se),
+         `95% CI coverage` = paste0(pct(coverage_wald), " (", pct(coverage_wald_mcse, 2), ")"),
+         `Type I error` = paste0(pct(type1_wald), " (", pct(type1_wald_mcse, 2), ")"))],
+  align = "lrrrrrr"
+)
+```
+
+![Bias, coverage and type I error of the CCW analysis under each model, with 95% Monte Carlo intervals.](`r fig(rd("fig_comparison"))`)
+
+![Sampling distribution of the estimate around its mean under each model.](`r fig(rd("fig_sens_distribution"))`)
+
+## 3 Adjustment under each model
+
+```{r tab-limits}
+#| tbl-cap: "Quantities carried over to the observed analysis. Centred 2.5% and 97.5% quantiles of the simulated estimates at the calibrated effect (CI) and with no effect (rejection limits), log HR scale, Monte Carlo SE in brackets; critical value of |z| for the parametric test."
+knitr::kable(
+  st[, .(Model, `Bias correction` = pm(bias, bias_mcse),
+         `CI: lower` = pm(q_lo, q_lo_mcse, f3), `CI: upper` = pm(q_hi, q_hi_mcse, f3),
+         `Test: lower` = pm(null_q_lo, null_q_lo_mcse, f3),
+         `Test: upper` = pm(null_q_hi, null_q_hi_mcse, f3),
+         `SE inflation` = f3(se_inflation), `Critical |z|` = f3(z_crit_par))],
+  align = "lrrrrrrr"
+)
+```
+
+```{r tab-adj}
+#| tbl-cap: "Adjusted analysis of the observed data under each model (hazard ratio scale) and its check in independent simulated studies."
+knitr::kable(
+  st[, .(Model, `Adjusted HR` = hr(est_adj),
+         `95% CI, non-parametric` = paste0(hr(ci_lo_np), " to ", hr(ci_hi_np)),
+         `p, non-parametric` = f3(p_np),
+         `95% CI, parametric` = paste0(hr(ci_lo_par), " to ", hr(ci_hi_par)),
+         `p, parametric` = f3(p_par),
+         `Coverage after adjustment` = paste0(pct(coverage_adj), " (", pct(coverage_adj_mcse, 2), ")"),
+         `Type I error after adjustment` = paste0(pct(type1_adj), " (", pct(type1_adj_mcse, 2), ")"))],
+  align = "lrrrrrrr"
+)
+```
+
+Coverage and type I error after adjustment are checked within each model, against that model's own true value, in studies that were not used to derive the adjustment. They show that the adjustment works when the model is right, not that it transfers between models; the transfer is what the differences between rows of the tables above describe.
+
+## 4 Conservative combination across models
+
+Following the draft of Section 3.8: the adjusted estimate closest to no effect, the widest confidence limit and rejection limit on each side, and the largest p-value; the null hypothesis is rejected only if it is rejected under every model. All three models are combined here; `sens_conservative(adjustment_all, keep = ...)` restricts the combination to the models with comparable fit.
+
+```{r tab-cons}
+#| tbl-cap: "Conservative adjusted analysis across the prediction models."
+knitr::kable(
+  cons[, .(`Adjusted HR` = hr(est_adj), `95% CI` = paste0(hr(ci_lo_np), " to ", hr(ci_hi_np)),
+           `Rejection limits (centred log HR)` = paste0(f3(null_q_lo), " to ", f3(null_q_hi)),
+           `Critical |z|` = f3(z_crit_par), `p` = f3(p_np),
+           `H0 rejected` = ifelse(reject_np, "yes", "no"))],
+  align = "rrrrrr"
+)
+```
+
+## 5 Run time and software
+
+```{r tab-runtime}
+#| tbl-cap: "Computing time by stage and model (sum over targets, all workers)."
+meta <- tryCatch(
+  as.data.table(targets::tar_meta(fields = c(name, type, seconds), targets_only = TRUE, store = store)),
+  error = function(e) NULL
+)
+if (!is.null(meta) && nrow(meta)) {
+  meta <- meta[type %in% c("stem", "branch") & !is.na(seconds)]
+  meta[, stage := fcase(
+    grepl("^calibration_", name), "Inverse calibration",
+    grepl("^truth_rows_", name), "True values",
+    grepl("^sim_results_", name), "Simulated studies",
+    grepl("^val_results_", name), "Independent check",
+    default = NA_character_
+  )]
+  meta <- meta[!is.na(stage)]
+  # Longest key first, so that "maringe" does not also match "maringe_exp"
+  keys <- names(lab)[order(-nchar(names(lab)))]
+  meta[, ds := vapply(name, function(n) {
+    hit <- keys[vapply(keys, function(k) grepl(paste0("_", k, "(_[0-9a-f]+)?$"), n), logical(1))]
+    if (length(hit)) hit[1] else NA_character_
+  }, character(1))]
+  rt <- dcast(meta[!is.na(ds), .(minutes = sum(seconds) / 60), by = .(stage, Model = lab[ds])],
+              stage ~ Model, value.var = "minutes")
+  knitr::kable(rt, digits = 1, col.names = c("Stage (CPU minutes)", names(rt)[-1]))
+} else {
+  cat("Run times are not available for this store.\n")
+}
+```
+
+```{r session}
+#| results: asis
+pk <- session$packages[session$packages$package %in% c("targets", "crew", "survival", "data.table"), ]
+cat(session$platform$version, "; ", paste(pk$package, pk$loadedversion, collapse = ", "), ". ",
+    "Seeds and settings: `config/config.yml` (profile of this store); design: `protocol/ADEMP.md`.",
+    sep = "")
+```

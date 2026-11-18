@@ -3,7 +3,8 @@
 # HR and 12-month survival difference), pilot study for the outer / inner split (Appendix) and the
 # hypothetical-trial target for a non-consistent estimator (Section 4.6, HR analysis only).
 # Run with targets::tar_make(); smoke run: Sys.setenv(R_CONFIG_ACTIVE = "smoke");
-# two-dataset comparison: "two_datasets"; generalized gamma sensitivity analysis: "gengamma".
+# two-dataset comparison: "two_datasets"; generalized gamma sensitivity analysis: "gengamma";
+# prediction-model sensitivity analysis without nested simulation (paper 3.8): "sens_check", "sens".
 library(targets)
 library(tarchetypes)
 
@@ -33,11 +34,14 @@ profile <- Sys.getenv("R_CONFIG_ACTIVE", "default")
 out_dir <- if (profile == "default") "reports" else file.path("reports", profile)
 # Report on the Maringe case study (into out_dir): not in smoke runs, only if Quarto is installed.
 # Kept out of cfg on purpose: every target depends on cfg, so a new key would rerun everything.
-do_report <- all(c("maringe", "maringe_surv12") %in% active) && profile != "smoke" &&
-  requireNamespace("quarto", quietly = TRUE) &&
+has_quarto <- requireNamespace("quarto", quietly = TRUE) &&
   isTRUE(tryCatch(nzchar(quarto::quarto_path()), error = function(e) FALSE))
+do_report <- all(c("maringe", "maringe_surv12") %in% active) && profile != "smoke" && has_quarto
 # Parallel workers need crew; without it the pipeline runs sequentially. QBA_WORKERS overrides
 # cfg$workers without editing the config (every target depends on cfg, so editing it reruns all).
+# Profile-only switches (absent from the default profile, so its cfg and store are unchanged)
+nested_on <- !isFALSE(cfg$nested$enabled)
+sens_on <- !is.null(cfg$sensitivity)
 n_workers <- as.integer(Sys.getenv("QBA_WORKERS", cfg$workers))
 use_crew <- n_workers > 1 && requireNamespace("crew", quietly = TRUE)
 
@@ -101,6 +105,98 @@ extra_targets <- if (extras) {
   list()
 }
 
+# Nested simulation, pilot study and hypothetical-trial target with the tables and figures that
+# need them. A profile with `nested: enabled: false` (sensitivity analysis, paper 3.8) keeps the
+# simple adjustment only.
+nested_targets <- if (nested_on) {
+  list(
+    # Nested simulation (paper 2.7.2): outer datasets at theta* and with no effect
+    tar_target(
+      nested_obs,
+      run_nested_batch(base_data, dgm, calibration, val_seeds, nested_batch_id, cfg$datasets[[ds]],
+                       cfg),
+      pattern = map(nested_batch_id)
+    ),
+    tar_target(
+      nested_null,
+      run_nested_batch(base_data, dgm, NULL, val_seeds, nested_batch_id, cfg$datasets[[ds]], cfg),
+      pattern = map(nested_batch_id)
+    ),
+    tar_target(nested, summarise_nested(nested_obs, nested_null, truth_table, adjustment,
+                                        cfg$datasets[[ds]]$pipeline$conf_level,
+                                        isTRUE(cfg$nested$shrink))),
+    tar_target(perf_compare, compare_performance(
+      sim_results, truth_table, validation, nested, cfg$datasets[[ds]]$pipeline$conf_level,
+      endpoint_info(cfg$datasets[[ds]]$pipeline)$favours_low
+    )),
+
+    # Pilot study for the outer / inner split (paper Appendix): few outer, few inner runs, own seeds
+    tar_target(
+      pilot_nested,
+      run_pilot_batch(base_data, dgm, calibration, pilot_seeds, pilot_batch_id, cfg$datasets[[ds]],
+                      cfg),
+      pattern = map(pilot_batch_id)
+    ),
+    tar_target(pilot_timing, time_inner_run(base_data, dgm, calibration$theta_cal,
+                                            cfg$datasets[[ds]]$pipeline, cfg$pilot$timing_reps)),
+    # Comparison design: the 500 x 250 split of v0.64
+    tar_target(allocation, recommend_allocation(pilot_nested, cfg$pilot, list(outer = 500, inner = 250),
+                                                pilot_timing)),
+    tar_target(pilot_anova, anova_by_inner_runs(pilot_nested, c(5, 10, 20, 30, 50, 100, 250))),
+    tar_target(pilot_limits, limit_width_by_inner_runs(pilot_nested, c(5, 11, 25, 50, 100, 250))),
+
+    # Target for a pipeline that is not consistent (paper 4.6): unweighted hypothetical trial, same
+    # replicates and inner runs, truth replaced (HR analysis only; other analyses give NULL)
+    tar_target(truth_rct, if (hr_only) {
+      truth_rct_grid(dgm, base_data, theta_sim, cfg$datasets[[ds]]$pipeline, cfg)
+    }),
+    tar_target(truth_table_rct, if (hr_only) make_truth_table(truth_rct, ds)),
+    tar_target(adjustment_rct, if (hr_only) {
+      adjust_simple(obs_result, sim_results, truth_table_rct, ds,
+                    cfg$datasets[[ds]]$pipeline$conf_level, TRUE)
+    }),
+    tar_target(validation_rct, if (hr_only) {
+      validate_adjustment(adjustment_rct, val_results, truth_table_rct,
+                          cfg$datasets[[ds]]$pipeline$conf_level)
+    }),
+    tar_target(
+      nested_obs_rct,
+      if (hr_only) {
+        rct_nested_update(nested_obs, base_data, dgm, calibration, val_seeds, cfg$datasets[[ds]], cfg,
+                          cfg$datasets[[ds]]$pipeline$conf_level)
+      },
+      pattern = map(nested_obs)
+    ),
+    tar_target(nested_rct, if (hr_only) {
+      summarise_nested(nested_obs_rct, nested_null, truth_table_rct, adjustment_rct,
+                       cfg$datasets[[ds]]$pipeline$conf_level, isTRUE(cfg$nested$shrink))
+    }),
+    tar_target(perf_compare_rct, if (hr_only) {
+      compare_performance(sim_results, truth_table_rct, validation_rct, nested_rct,
+                          cfg$datasets[[ds]]$pipeline$conf_level, TRUE)
+    }),
+    tar_target(table_results_rct, if (hr_only) {
+      make_results_table(obs_result, dgm, calibration, truth_table_rct, performance, adjustment_rct,
+                         perf_compare_rct, nested_rct, cfg$datasets[[ds]])
+    }),
+    tar_target(table_results, make_results_table(
+      obs_result, dgm, calibration, truth_table, performance, adjustment, perf_compare, nested,
+      cfg$datasets[[ds]]
+    )),
+    tar_target(paper_figures, save_paper_figures(
+      perf_compare, sim_results, nested_obs, base_data, dgm, adjustment, cfg$datasets[[ds]],
+      file.path(out_dir, "paper", ds)
+    ), format = "file")
+  )
+} else {
+  list(
+    tar_target(perf_compare, compare_performance(
+      sim_results, truth_table, validation, NULL, cfg$datasets[[ds]]$pipeline$conf_level,
+      endpoint_info(cfg$datasets[[ds]]$pipeline)$favours_low
+    ))
+  )
+}
+
 # One target chain per dataset (static branching)
 per_dataset <- tar_map(
   values = list(ds = active, hr_only = unname(is_hr)),
@@ -157,88 +253,10 @@ per_dataset <- tar_map(
   tar_target(validation, validate_adjustment(adjustment, val_results, truth_table,
                                              cfg$datasets[[ds]]$pipeline$conf_level)),
 
-  # Nested simulation (paper 2.7.2): outer datasets at theta* and with no effect
-  tar_target(
-    nested_obs,
-    run_nested_batch(base_data, dgm, calibration, val_seeds, nested_batch_id, cfg$datasets[[ds]],
-                     cfg),
-    pattern = map(nested_batch_id)
-  ),
-  tar_target(
-    nested_null,
-    run_nested_batch(base_data, dgm, NULL, val_seeds, nested_batch_id, cfg$datasets[[ds]], cfg),
-    pattern = map(nested_batch_id)
-  ),
-  tar_target(nested, summarise_nested(nested_obs, nested_null, truth_table, adjustment,
-                                      cfg$datasets[[ds]]$pipeline$conf_level,
-                                      isTRUE(cfg$nested$shrink))),
-  tar_target(perf_compare, compare_performance(
-    sim_results, truth_table, validation, nested, cfg$datasets[[ds]]$pipeline$conf_level,
-    endpoint_info(cfg$datasets[[ds]]$pipeline)$favours_low
-  )),
-
-  # Pilot study for the outer / inner split (paper Appendix): few outer, few inner runs, own seeds
-  tar_target(
-    pilot_nested,
-    run_pilot_batch(base_data, dgm, calibration, pilot_seeds, pilot_batch_id, cfg$datasets[[ds]],
-                    cfg),
-    pattern = map(pilot_batch_id)
-  ),
-  tar_target(pilot_timing, time_inner_run(base_data, dgm, calibration$theta_cal,
-                                          cfg$datasets[[ds]]$pipeline, cfg$pilot$timing_reps)),
-  # Comparison design: the 500 x 250 split of v0.64
-  tar_target(allocation, recommend_allocation(pilot_nested, cfg$pilot, list(outer = 500, inner = 250),
-                                              pilot_timing)),
-  tar_target(pilot_anova, anova_by_inner_runs(pilot_nested, c(5, 10, 20, 30, 50, 100, 250))),
-  tar_target(pilot_limits, limit_width_by_inner_runs(pilot_nested, c(5, 11, 25, 50, 100, 250))),
-
-  # Target for a pipeline that is not consistent (paper 4.6): unweighted hypothetical trial, same
-  # replicates and inner runs, truth replaced (HR analysis only; other analyses give NULL)
-  tar_target(truth_rct, if (hr_only) {
-    truth_rct_grid(dgm, base_data, theta_sim, cfg$datasets[[ds]]$pipeline, cfg)
-  }),
-  tar_target(truth_table_rct, if (hr_only) make_truth_table(truth_rct, ds)),
-  tar_target(adjustment_rct, if (hr_only) {
-    adjust_simple(obs_result, sim_results, truth_table_rct, ds,
-                  cfg$datasets[[ds]]$pipeline$conf_level, TRUE)
-  }),
-  tar_target(validation_rct, if (hr_only) {
-    validate_adjustment(adjustment_rct, val_results, truth_table_rct,
-                        cfg$datasets[[ds]]$pipeline$conf_level)
-  }),
-  tar_target(
-    nested_obs_rct,
-    if (hr_only) {
-      rct_nested_update(nested_obs, base_data, dgm, calibration, val_seeds, cfg$datasets[[ds]], cfg,
-                        cfg$datasets[[ds]]$pipeline$conf_level)
-    },
-    pattern = map(nested_obs)
-  ),
-  tar_target(nested_rct, if (hr_only) {
-    summarise_nested(nested_obs_rct, nested_null, truth_table_rct, adjustment_rct,
-                     cfg$datasets[[ds]]$pipeline$conf_level, isTRUE(cfg$nested$shrink))
-  }),
-  tar_target(perf_compare_rct, if (hr_only) {
-    compare_performance(sim_results, truth_table_rct, validation_rct, nested_rct,
-                        cfg$datasets[[ds]]$pipeline$conf_level, TRUE)
-  }),
-  tar_target(table_results_rct, if (hr_only) {
-    make_results_table(obs_result, dgm, calibration, truth_table_rct, performance, adjustment_rct,
-                       perf_compare_rct, nested_rct, cfg$datasets[[ds]])
-  }),
-
   # Publication outputs (paper Section 4): tables and figures
   tar_target(raw_data, read_raw_data(base_file, cfg$datasets[[ds]]$base)),
   tar_target(table_baseline, make_baseline_table(raw_data, cfg$datasets[[ds]]$base,
                                                  cfg$datasets[[ds]])),
-  tar_target(table_results, make_results_table(
-    obs_result, dgm, calibration, truth_table, performance, adjustment, perf_compare, nested,
-    cfg$datasets[[ds]]
-  )),
-  tar_target(paper_figures, save_paper_figures(
-    perf_compare, sim_results, nested_obs, base_data, dgm, adjustment, cfg$datasets[[ds]],
-    file.path(out_dir, "paper", ds)
-  ), format = "file"),
   tar_target(balance, ccw_balance(base_data, cfg$datasets[[ds]]$pipeline,
                                    cfg$datasets[[ds]][["dgm"]]$covariates)),
   tar_target(fig_balance, save_balance_figure(balance, cfg$datasets[[ds]],
@@ -249,6 +267,7 @@ per_dataset <- tar_map(
     file.path(out_dir, paste0("fig_protocol_", ds, ".png")), width = 8.5,
     height = if (cfg$datasets[[ds]]$base == "maringe") 4.6 else 5
   ), format = "file"),
+  nested_targets,
   extra_targets
 )
 
@@ -257,9 +276,13 @@ list(
   tar_target(val_seeds, make_crn_seeds(cfg$seed_validation, cfg$B_validation)),
   tar_target(batch_id, seq_len(ceiling(cfg$B / cfg$batch_size))),
   tar_target(val_batch_id, seq_len(ceiling(cfg$B_validation / cfg$batch_size))),
-  tar_target(nested_batch_id, seq_len(ceiling(cfg$nested$outer / cfg$nested$batch_size))),
-  tar_target(pilot_seeds, make_crn_seeds(cfg$seed_pilot, cfg$pilot$outer)),
-  tar_target(pilot_batch_id, seq_len(ceiling(cfg$pilot$outer / cfg$pilot$batch_size))),
+  if (nested_on) {
+    list(
+      tar_target(nested_batch_id, seq_len(ceiling(cfg$nested$outer / cfg$nested$batch_size))),
+      tar_target(pilot_seeds, make_crn_seeds(cfg$seed_pilot, cfg$pilot$outer)),
+      tar_target(pilot_batch_id, seq_len(ceiling(cfg$pilot$outer / cfg$pilot$batch_size)))
+    )
+  },
   # Truth seeds: CRN across theta; the main truths and the belt truths use prefixes of them
   tar_target(truth_seeds, make_crn_seeds(
     cfg$seed_truth,
@@ -310,6 +333,36 @@ list(
     tar_target(fig_comparison, save_plot(plot_comparison(performance_all, ds_labels),
                                          file.path(out_dir, "fig_comparison.png"), height = 5.5),
                format = "file")
+  },
+  # Prediction-model sensitivity analysis (paper 3.8; sens profiles): the per-model chains above
+  # compared side by side, with its own short report
+  if (sens_on) {
+    list(
+      tar_combine(perf_compare_all, per_dataset[["perf_compare"]],
+                  command = data.table::rbindlist(list(!!!.x), idcol = "target")),
+      tar_target(sens_fit, sens_model_fit(dgm_all, ds_labels)),
+      tar_target(sens_table, sens_compare(adjustment_all, performance_all, perf_compare_all,
+                                          sim_all, cfg$sensitivity$primary)),
+      tar_target(sens_conservative_all, sens_conservative(adjustment_all)),
+      tar_target(fig_sens_fit, save_plot(plot_sens_fit(base_all[[1]], dgm_all, ds_labels),
+                                         file.path(out_dir, "fig_sens_fit.png"), height = 4.6),
+                 format = "file"),
+      tar_target(fig_sens_distribution, save_plot(
+        plot_sens_distribution(sim_all, performance_all, ds_labels),
+        file.path(out_dir, "fig_sens_distribution.png"), width = 8.5, height = 4.6
+      ), format = "file"),
+      if (has_quarto) {
+        list(
+          tar_target(sens_qmd, "reports/sensitivity_report.qmd", format = "file"),
+          tar_target(sens_report, render_report(
+            sens_qmd, targets::tar_path_store(), out_dir,
+            deps = list(sens_fit, sens_table, sens_conservative_all, fig_sens_fit,
+                        fig_sens_distribution, fig_comparison, calibration_all, obs_all,
+                        base_all, run_settings, session)
+          ), format = "file", deployment = "main")
+        )
+      }
+    )
   },
   # Colleague report on the Maringe case study (needs the Quarto CLI)
   if (do_report) {
