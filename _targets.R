@@ -341,8 +341,16 @@ list(
       tar_combine(perf_compare_all, per_dataset[["perf_compare"]],
                   command = data.table::rbindlist(list(!!!.x), idcol = "target")),
       tar_target(sens_fit, sens_model_fit(dgm_all, ds_labels)),
+      # Per-seed true values of all models, to pair their errors across models
+      tar_combine(truth_rows_all, per_dataset[["truth_rows"]],
+                  command = data.table::rbindlist(list(!!!.x), idcol = "target")[
+                    , dataset := sub("^truth_rows_", "", target)][]),
       tar_target(sens_table, sens_compare(adjustment_all, performance_all, perf_compare_all,
-                                          sim_all, cfg$sensitivity$primary)),
+                                          sim_all, cfg$sensitivity$primary,
+                                          truth_rows = truth_rows_all)),
+      tar_target(sens_limits, sens_limit_differences(sim_all, performance_all,
+                                                     cfg$sensitivity$primary)),
+      tar_target(sens_verdict_table, sens_verdict(sens_table, sens_limits)),
       tar_target(sens_conservative_all, sens_conservative(adjustment_all)),
       tar_target(fig_sens_fit, save_plot(plot_sens_fit(base_all[[1]], dgm_all, ds_labels),
                                          file.path(out_dir, "fig_sens_fit.png"), height = 4.6),
@@ -356,7 +364,8 @@ list(
           tar_target(sens_qmd, "reports/sensitivity_report.qmd", format = "file"),
           tar_target(sens_report, render_report(
             sens_qmd, targets::tar_path_store(), out_dir,
-            deps = list(sens_fit, sens_table, sens_conservative_all, fig_sens_fit,
+            deps = list(sens_fit, sens_table, sens_limits, sens_verdict_table,
+                        sens_conservative_all, fig_sens_fit,
                         fig_sens_distribution, fig_comparison, calibration_all, obs_all,
                         base_all, run_settings, session)
           ), format = "file", deployment = "main")

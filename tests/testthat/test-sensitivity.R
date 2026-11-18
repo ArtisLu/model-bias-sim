@@ -9,9 +9,14 @@ sens_chain <- local({
     dgm <- fit_dgm(base_test, sp$dgm, sp$censoring)
     obs <- run_pipeline(base_test, sp$pipeline)
     th <- c(-0.7, 0)
-    tt <- make_truth_table(rbindlist(lapply(th, function(t) {
-      compute_truth(dgm, base_test, t, sp$pipeline, cfg_s, n_rep = 2, n_target = 1000)
-    })), ds)
+    # Same truth seeds under every model, as in the pipeline
+    tseeds <- make_crn_seeds(cfg_s$seed_truth, 3)
+    rows <- rbindlist(lapply(th, function(t) {
+      rbindlist(lapply(1:3, function(j) {
+        truth_point(dgm, base_test, t, j, tseeds, sp$pipeline, cfg_s, n_target = 1000)
+      }))
+    }))
+    tt <- make_truth_table(summarise_truth(rows), ds)
     run <- function(sd) {
       rbindlist(lapply(th, function(t) run_batch(base_test, dgm, t, sd, 1, sp$pipeline, 30)))[
         , dataset := ds]
@@ -19,6 +24,7 @@ sens_chain <- local({
     sims <- run(seeds)
     adj <- adjust_simple(obs, sims, tt, ds)
     list(dgm = dgm, sims = sims, perf = summarise_performance(sims, tt), adj = adj,
+         rows = rows[, dataset := ds][],
          long = compare_performance(sims, tt, validate_adjustment(adj, run(vseeds), tt), NULL))
   }
   res <- stats::setNames(lapply(keys, one), keys)
@@ -28,6 +34,7 @@ sens_chain <- local({
     sims = rbindlist(lapply(res, `[[`, "sims")),
     perf = rbindlist(lapply(res, `[[`, "perf")),
     adj = rbindlist(lapply(res, `[[`, "adj")),
+    rows = rbindlist(lapply(res, `[[`, "rows")),
     long = rbindlist(stats::setNames(lapply(res, `[[`, "long"), paste0("perf_compare_", keys)),
                      idcol = "target")
   )
@@ -66,32 +73,47 @@ test_that("comparison table reproduces the per-model adjustment and differences 
   expect_true(all(st$q_lo < 0 & st$q_hi > 0 & st$q_lo_mcse > 0))
   expect_true(all(is.finite(st$coverage_adj) & is.finite(st$type1_adj)))
   expect_error(sens_compare(sens_chain$adj, sens_chain$perf, sens_chain$long, sens_chain$sims, "x"))
+  expect_false(any(st$d_paired))
 })
 
-test_that("quantile MCSE matches the spread of the quantile over repeated samples", {
-  q <- withr::with_seed(1, replicate(400, stats::quantile(rnorm(2000), 0.025, type = 8)))
-  m <- withr::with_seed(2, mean(replicate(50, quantile_mcse(rnorm(2000), 0.025))))
-  expect_equal(m, stats::sd(q), tolerance = 0.15)
+test_that("pairing the true values by seed gives a valid and smaller MCSE of the bias difference", {
+  ind <- sens_compare(sens_chain$adj, sens_chain$perf, sens_chain$long, sens_chain$sims, "maringe")
+  prd <- sens_compare(sens_chain$adj, sens_chain$perf, sens_chain$long, sens_chain$sims, "maringe",
+                      truth_rows = sens_chain$rows)
+  expect_equal(prd$d_bias, ind$d_bias)
+  expect_equal(prd$d_paired, c(FALSE, TRUE, TRUE))
+  expect_true(all(prd$d_bias_mcse[-1] > 0 & prd$d_bias_mcse[-1] < ind$d_bias_mcse[-1]))
+  # Direct computation for one model
+  r <- sens_chain$rows
+  th <- sens_chain$perf[scenario == "observed", setNames(theta, dataset)]
+  a <- r[dataset == "maringe_gg" & abs(theta - th[["maringe_gg"]]) < 1e-10][order(seed_id)]
+  b <- r[dataset == "maringe" & abs(theta - th[["maringe"]]) < 1e-10][order(seed_id)]
+  expect_equal(paired_truth_mcse(r, "maringe_gg", th[["maringe_gg"]], "maringe", th[["maringe"]]),
+               sd(a$estimate - b$estimate) / sqrt(3))
+  expect_true(is.na(paired_truth_mcse(NULL, "maringe_gg", 0, "maringe", 0)))
 })
 
-test_that("conservative combination: widest limits, estimate nearest to no effect", {
-  ad <- data.table(
-    dataset = c("a", "b"), est_adj = c(-0.5, -0.4), ci_lo_np = c(-1.0, -0.9),
-    ci_hi_np = c(0.0, 0.1), null_q_lo = c(-0.52, -0.50), null_q_hi = c(0.55, 0.57),
-    z_crit_par = c(2.01, 2.04), p_np = c(0.04, 0.06), reject_np = c(TRUE, FALSE)
-  )
-  cs <- sens_conservative(ad)
-  expect_equal(cs$est_adj, -0.4)
-  expect_equal(c(cs$ci_lo_np, cs$ci_hi_np), c(-1.0, 0.1))
-  expect_equal(c(cs$null_q_lo, cs$null_q_hi), c(-0.52, 0.57))
-  expect_equal(cs$z_crit_par, 2.04)
-  expect_equal(cs$p_np, 0.06)
-  expect_false(cs$reject_np)
-  expect_equal(sens_conservative(ad, keep = "a")$est_adj, -0.5)
+test_that("limit differences: paired quantile differences with bootstrap MCSE", {
+  ld <- sens_limit_differences(sens_chain$sims, sens_chain$perf, "maringe", n_boot = 50)
+  expect_equal(nrow(ld), 8)
+  expect_setequal(ld$limit, c("ci_lo", "ci_hi", "test_lo", "test_hi"))
+  expect_true(all(ld$diff_mcse > 0))
+  # Against the primary model itself the difference and its MCSE are zero
+  self <- copy(sens_chain$sims[dataset == "maringe"])[, dataset := "copy"]
+  pf <- rbind(sens_chain$perf, copy(sens_chain$perf[dataset == "maringe"])[, dataset := "copy"])
+  z <- sens_limit_differences(rbind(sens_chain$sims, self), pf, "maringe", n_boot = 20)
+  expect_equal(z[dataset == "copy", diff], rep(0, 4))
+  expect_equal(z[dataset == "copy", diff_mcse], rep(0, 4))
 })
 
-test_that("sensitivity figures build", {
-  expect_s3_class(plot_sens_fit(base_test, sens_chain$dgms, sens_chain$labels), "ggplot")
-  expect_s3_class(plot_sens_distribution(sens_chain$sims, sens_chain$perf, sens_chain$labels),
-                  "ggplot")
+test_that("verdict: negligible, unclear or relevant against the threshold, allowing for MCSE", {
+  st <- data.table(dataset = c("p", "m"), d_bias = c(0, 0.03), d_bias_mcse = c(0, 0.005),
+                   emp_se = c(0.3, 0.3))
+  ld <- data.table(dataset = "m", limit = c("ci_lo", "ci_hi", "test_lo"),
+                   diff = c(0.004, 0.016, -0.001), diff_mcse = c(0.001, 0.004, 0.008))
+  v <- sens_verdict(st, ld)
+  expect_equal(v$threshold[1], 0.015)
+  expect_equal(v$detectable, c(TRUE, TRUE, TRUE, FALSE))
+  # 0.03 - 0.01 > 0.015; 0.004 + 0.002 < 0.015; 0.016 within 0.015 +/- 0.008; 0.001 + 0.016 > 0.015
+  expect_equal(v$status, c("relevant", "negligible", "unclear", "unclear"))
 })
