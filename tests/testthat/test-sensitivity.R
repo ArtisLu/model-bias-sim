@@ -117,3 +117,31 @@ test_that("verdict: negligible, unclear or relevant against the threshold, allow
   # 0.03 - 0.01 > 0.015; 0.004 + 0.002 < 0.015; 0.016 within 0.015 +/- 0.008; 0.001 + 0.016 > 0.015
   expect_equal(v$status, c("relevant", "negligible", "unclear", "unclear"))
 })
+
+test_that("quantile MCSE matches the spread of the quantile over repeated samples", {
+  q <- withr::with_seed(1, replicate(400, stats::quantile(rnorm(2000), 0.025, type = 8)))
+  m <- withr::with_seed(2, mean(replicate(50, quantile_mcse(rnorm(2000), 0.025))))
+  expect_equal(m, stats::sd(q), tolerance = 0.15)
+})
+
+test_that("conservative combination: widest limits, estimate nearest to no effect", {
+  ad <- data.table(
+    dataset = c("a", "b"), est_adj = c(-0.5, -0.4), ci_lo_np = c(-1.0, -0.9),
+    ci_hi_np = c(0.0, 0.1), null_q_lo = c(-0.52, -0.50), null_q_hi = c(0.55, 0.57),
+    z_crit_par = c(2.01, 2.04), p_np = c(0.04, 0.06), reject_np = c(TRUE, FALSE)
+  )
+  cs <- sens_conservative(ad)
+  expect_equal(cs$est_adj, -0.4)
+  expect_equal(c(cs$ci_lo_np, cs$ci_hi_np), c(-1.0, 0.1))
+  expect_equal(c(cs$null_q_lo, cs$null_q_hi), c(-0.52, 0.57))
+  expect_equal(cs$z_crit_par, 2.04)
+  expect_equal(cs$p_np, 0.06)
+  expect_false(cs$reject_np)
+  expect_equal(sens_conservative(ad, keep = "a")$est_adj, -0.5)
+})
+
+test_that("sensitivity figures build", {
+  expect_s3_class(plot_sens_fit(base_test, sens_chain$dgms, sens_chain$labels), "ggplot")
+  expect_s3_class(plot_sens_distribution(sens_chain$sims, sens_chain$perf, sens_chain$labels),
+                  "ggplot")
+})

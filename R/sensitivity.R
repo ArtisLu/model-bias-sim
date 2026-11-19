@@ -191,3 +191,63 @@ sens_verdict <- function(st, ld, relevant = 0.05) {
   )]
   out[]
 }
+
+#' Conservative adjustment across prediction models (paper Section 3.8)
+#' Adjusted estimate closest to no effect, the widest CI limits and rejection limits on each
+#' side, and the largest p-value; H0 is rejected only if it is rejected under every model.
+#' @param adjustment_all Stacked `adjust_simple()` rows; @param keep Dataset keys to combine
+#'   (models with a clearly worse fit should be left out; default all).
+#' @return One-row data.table: models, est_adj, ci_lo_np, ci_hi_np, null_q_lo, null_q_hi,
+#'   z_crit_par, p_np, reject_np.
+sens_conservative <- function(adjustment_all, keep = adjustment_all$dataset) {
+  checkmate::assert_subset(keep, adjustment_all$dataset)
+  ad <- adjustment_all[dataset %in% keep]
+  data.table::data.table(
+    models = paste(ad$dataset, collapse = ", "),
+    est_adj = ad$est_adj[which.min(abs(ad$est_adj))],
+    ci_lo_np = min(ad$ci_lo_np), ci_hi_np = max(ad$ci_hi_np),
+    null_q_lo = min(ad$null_q_lo), null_q_hi = max(ad$null_q_hi),
+    z_crit_par = max(ad$z_crit_par),
+    p_np = max(ad$p_np), reject_np = all(ad$reject_np)
+  )
+}
+
+#' Figure: Kaplan-Meier curve of the outcome against the marginal survival of each model
+#' @param data Base data; @param dgms Named list of fitted DGMs; @param labels Dataset labels.
+#' @return ggplot.
+plot_sens_fit <- function(data, dgms, labels) {
+  times <- seq(0, max(data$time), length.out = 200)
+  km <- survival::survfit(survival::Surv(data$time, data$status) ~ 1)
+  d <- data.table::rbindlist(lapply(names(labels), function(ds) {
+    m <- dgms[[grep(paste0("(^|_)", ds, "$"), names(dgms))[1]]]
+    data.table::data.table(time = times, surv = dgm_marginal_surv(m, data, times),
+                           model = dgm_model_label(m))
+  }))
+  ggplot2::ggplot(d, ggplot2::aes(time, surv)) +
+    ggplot2::geom_step(data = data.table::data.table(time = c(0, km$time), surv = c(1, km$surv)),
+                       colour = viz_cols[["ink"]], linewidth = 0.9) +
+    ggplot2::geom_line(ggplot2::aes(colour = model, linetype = model), linewidth = 0.8) +
+    ggplot2::labs(x = "Days since time zero", y = "Proportion alive (black: Kaplan-Meier)",
+                  colour = NULL, linetype = NULL) +
+    theme_qba()
+}
+
+#' Figure: centred sampling distributions of the estimate under each model, both scenarios
+#' @param sim_all Stacked main replicates; @param performance_all Stacked performance rows.
+#' @param labels Dataset labels.
+#' @return ggplot.
+plot_sens_distribution <- function(sim_all, performance_all, labels) {
+  d <- merge(sim_all[!is.na(estimate) & dataset %in% names(labels)],
+             performance_all[, .(dataset, theta, scenario, mean_est)], by = c("dataset", "theta"))
+  d[, `:=`(
+    centred = estimate - mean_est,
+    model = factor(labels[dataset], levels = labels),
+    panel = data.table::fifelse(scenario == "null", "No effect", "Calibrated effect")
+  )]
+  ggplot2::ggplot(d, ggplot2::aes(centred, colour = model, linetype = model)) +
+    ggplot2::geom_density(linewidth = 0.7, key_glyph = "path") +
+    ggplot2::facet_wrap(~panel) +
+    ggplot2::labs(x = "Estimate minus its mean (log HR)", y = "Density", colour = NULL,
+                  linetype = NULL) +
+    theme_qba()
+}
