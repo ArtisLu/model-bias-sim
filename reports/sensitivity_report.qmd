@@ -111,7 +111,7 @@ knitr::kable(
 
 ![Kaplan-Meier curve of the observed outcome (black) and marginal survival implied by each model.](`r fig(rd("fig_sens_fit"))`)
 
-The conservative combination of Section 4 is meant for models that fit about equally well; a model with a clearly worse fit is a stress test of misspecification and should be read as such.
+The conservative combination of Section 5 is meant for models that fit about equally well; a model with a clearly worse fit is a stress test of misspecification and should be read as such.
 
 ## 2 Calibration and performance of the CCW analysis
 
@@ -143,9 +143,13 @@ knitr::kable(
 #| results: asis
 nf <- n_tr[N < n_max]
 if (nrow(nf)) {
-  cat("The analysis failed in ", paste0(n_max - nf$N, " large dataset", ifelse(n_max - nf$N > 1, "s", ""),
-      " (", lab[nf$dataset], ", generating log HR ", f3(nf$theta), ")", collapse = "; "),
-      " and was left out of the true value; the error is recorded in the pipeline. Failures of this kind come from the survival package (aeqSurv) when a simulated death falls a negligible fraction of a day after a split point, which becomes likely only in datasets of tens of thousands of patients.\n", sep = "")
+  k <- sum(n_max - nf$N)
+  where <- paste0(lab[nf$dataset], " model, ",
+                  ifelse(abs(nf$theta) < 1e-12, "no effect", "calibrated effect"),
+                  " (", n_max - nf$N, " of ", n_max, ")", collapse = "; ")
+  cat("The analysis failed in ", k, " large dataset", if (k > 1) "s", ": ", where, ". ",
+      if (k > 1) "They were" else "It was",
+      " left out of the true values, and the errors are recorded in the pipeline. Failures of this kind come from the survival package (aeqSurv) when a simulated death falls a negligible fraction of a day after a split point, which becomes likely only in datasets of tens of thousands of patients.\n", sep = "")
 }
 ```
 
