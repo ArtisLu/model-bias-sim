@@ -338,3 +338,20 @@ preview:
     precision_rel_se: 0.02
     min_outer_percentile: 1000
     min_inner_limits: 50
+
+
+# Laptop run of the sensitivity analysis (~5-6 h on 3 workers): more truth datasets,
+# fewer studies, since the true value dominates the MCSE of the bias
+sens_laptop:
+  inherits: sens
+  B: 20000
+  B_validation: 10000
+  truth:
+    n_target: 50000
+    n_rep: 96
+  calibration:
+    start: -0.7
+    B: 5000
+    max_iter: 6
+    tol: 0.002
+    bound: 3
