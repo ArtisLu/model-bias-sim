@@ -215,12 +215,16 @@ per_dataset <- tar_map(
                                              cfg$datasets[[ds]]$tol_scale)),
   tar_target(theta_sim, c(calibration$theta_cal, 0)),
   # One branch per (theta, large dataset): truths run in parallel (CRN: seed j is the same large
-  # dataset at every theta)
+  # dataset at every theta). A large dataset whose analysis fails (e.g. survival's aeqSurv error
+  # when a simulated death falls a split-second after a split point) is left out of the average
+  # and recorded as an errored branch, instead of stopping the run; the reports count the datasets
+  # used. The error mode is not part of the target hash, so finished branches stay valid.
   tar_target(
     truth_rows,
     truth_point(dgm, base_data, theta_sim, truth_seed_id, truth_seeds,
                 cfg$datasets[[ds]]$pipeline, cfg),
-    pattern = cross(theta_sim, truth_seed_id)
+    pattern = cross(theta_sim, truth_seed_id),
+    error = "null"
   ),
   tar_target(truth, summarise_truth(truth_rows)),
   tar_target(truth_table, make_truth_table(truth, ds)),
